@@ -1,0 +1,62 @@
+- cmd: function servers\ncd ~/Code/infl/hub;\n\nforeman start -f Procfile-dev;\nend
+  when: 1445353946
+  paths:
+    - Procfile-dev
+- cmd: function servers\ncd ~/Code/infl/hub\nforeman start -f Procfile-dev\nend
+  when: 1445353957
+  paths:
+    - Procfile-dev
+- cmd: function servers\ncd ~/Code/infl/hub\nforeman start -f Procfile-dev\ncd -\nend
+  when: 1445353979
+  paths:
+    - Procfile-dev
+- cmd: function fish_greeting\nend
+  when: 1445354237
+- cmd: function setupapp\nfor val in hub,narci-service,api,waldo,community\ncd ~/Code/infl/$val\necho (pwd)\nend\nend
+  when: 1445355909
+- cmd: function setupapp\nfor val in hub narci-service api waldo community\ncd ~/Code/infl/$val\necho (pwd)\nend\nend
+  when: 1445355952
+  paths:
+    - hub
+    - narci-service
+    - api
+    - waldo
+    - community
+- cmd: function setupapp\nfor val in hub narci-service api waldo community\ncd ~/Code/infl/$val\nset_color purple\necho setting up $val\nbundle\nrake db:create db:schema:load\nset_color green\necho setup for $val complete\nset_color normal\nend\nend\n
+  when: 1445356086
+- cmd: function setupapp\nfor val in hub narci-service api waldo community\ncd ~/Code/infl/$val\nset_color purple\necho setting up $val\ngem install bundler\nrvm install ruby\nbundle\nrake db:create db:schema:load\nset_color green\necho setup for $val complete\nset_color normal\nend\nend
+  when: 1445356180
+- cmd: function setupapp\nset_color purple\necho setting up (pwd)\ngem install bundler\nrvm install ruby\nrake db:create db:schema:load\nset_color green\necho setup for $val complete\nset_color normal\nend
+  when: 1445359109
+- cmd: function setupapp\nset_color purple\necho setting up (pwd)\ngem install bundler\nbundle\nrvm install ruby\nrake db:create db:schema:load\nset_color green\necho setup for $val complete\nset_color normal\nend\n
+  when: 1445359131
+- cmd: function setupapp\n\nend
+  when: 1445360212
+- cmd: function updateapps\nfor app in waldo api community narci-service hub\nset_color purple\necho ------ updating $app -------\ncd ~/Code/infl/$app\ngit pull\nbundle\nset_color green\necho ------ $app updated ------\nset_color normal\nend\nend\n
+  when: 1445360605
+- cmd: function updateapps\nfor app in waldo api community narci-service hub\nset_color purple\necho ------ updating $app -------\ncd ~/Code/infl/$app\ngit pull\nbundle\nset_color green\necho ------ $app updated ------\nend\necho ------ apps updated ------\nset_color normal\nend
+  when: 1445360688
+- cmd: function updateapps\nfor app in waldo api community narci-service hub\nset_color purple\necho ------ updating $app -------\ncd ~/Code/infl/$app\ngit pull\nbundle\nset_color green\necho ------ $app updated ------\nend\necho ------ apps updated ------\nset_color normal\nend
+  when: 1445363751
+- cmd: function updateapps\nfor app in waldo api challenge-suggester community narci-service hub\nset_color purple\necho ------ updating $app -------\ncd ~/Code/infl/$app\ngit pull\nbundle\nset_color green\necho ------ $app updated ------\nend\necho ------ apps updated ------\nset_color normal\nend
+  when: 1445363829
+- cmd: function updateapps\nfor app in waldo api challenge-suggester community narci-service hub\nset_color purple\necho ------ updating $app -------\ncd ~/Code/infl/$app\ngit pull\nbundle \nbundle exec rake db:migrate\nset_color green\necho ------ $app updated ------\nend\necho ------ apps updated ------\nset_color normal\nend\n
+  when: 1445364750
+- cmd: function updateapps\nfor app in waldo api challenge-suggester community narci-service hub\nset_color purple\necho ------ updating $app -------\ncd ~/Code/infl/$app\ngit pull\ngem install bundler\nbundle\nbundle exec rake db:migrate\nset_color green\necho ------ $app updated ------\nend\necho ------ apps updated ------\nset_color normal\nend
+  when: 1445366495
+- cmd: n
+  when: 1449995339
+- cmd: y
+  when: 1449996398
+- cmd: n
+  when: 1449997296
+- cmd: n
+  when: 1456769375
+- cmd: y
+  when: 1503517806
+- cmd: n
+  when: 1503517824
+- cmd: y
+  when: 1503517946
+- cmd: n
+  when: 1503517970

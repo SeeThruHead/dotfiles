@@ -1,0 +1,46 @@
+name: swat
+root: ~/Code/infl/
+
+windows:
+  - multi_hub_reporting:
+      root: ~/Code/infl/multi_hub_reporting
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        - dc up
+        -
+  - multi-hub-fe:
+      root: ~/Code/infl/multi-hub-fe
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        - npm start
+        -
+  - crm-view:
+      root: ~/Code/infl/crm-view
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        - npm start
+        -
+  - hedwig-fe:
+      root: ~/Code/infl/hedwig-fe
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        - npm start
+        -
+  - hedwig-be:
+      root: ~/Code/infl/hedwig
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        - dc up
+        -
+  - contact_search:
+      root: ~/Code/infl/contact_search
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - dc up
+        -
+        -
