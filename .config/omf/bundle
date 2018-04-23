@@ -1,0 +1,7 @@
+package foreign-env
+package https://github.com/jethrokuan/fzf
+package nvm
+package rvm
+package z
+theme agnoster
+theme default

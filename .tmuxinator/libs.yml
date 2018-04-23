@@ -1,0 +1,123 @@
+name: libs
+root: ~/Code/infl/
+
+windows:
+  - CIA:
+      root: ~/Code/infl/create-infl-app
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - infl-release:
+      root: ~/Code/infl/infl-release
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - npi:
+      root: ~/Code/infl/neutrino-preset-infl
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - runtime-deps:
+      root: ~/Code/infl/runtime-deps
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - secgard:
+      root: ~/Code/infl/secret-garden
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - patternity-evo:
+      root: ~/Code/infl/patternity-evo
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - aql-gen:
+      root: ~/Code/infl/aql-gen
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - eslint:
+      root: ~/Code/infl/infl-eslint-config
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - icons:
+      root: ~/Code/infl/infl-icons
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - val-help:
+      root: ~/Code/infl/validation-helpers
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - jwtjs:
+      root: ~/Code/infl/jwtjs
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - qaSel:
+      root: ~/Code/infl/qa-selector
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - badges:
+      root: ~/Code/infl/badges
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - contact-activity:
+      root: ~/Code/infl/contact-activity
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - locize-launcher:
+      root: ~/Code/infl/locize-launcher
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - leaderboard:
+      root: ~/Code/infl/leaderboard-fe
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -
+  - profile-details:
+      root: ~/Code/infl/profile-details-fe
+      layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
+      panes:
+        - vim
+        -
+        -

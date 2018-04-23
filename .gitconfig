@@ -46,7 +46,7 @@
 	rebase = true
 [user]
 	name = Shane Keulen
-	email = shane.keulen@gmail.com
+	email = shane.keulen@influitive.com
 [difftool "sourcetree"]
 	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
 	path = 

@@ -1,74 +1,72 @@
+let g:python2_host_prog = '/usr/local/bin/python'
+let g:python3_host_prog = '/usr/local/bin/python3'
+
 set nocompatible              " be iMproved, required
 filetype off                  " required
 
-" set the runtime path to include Vundle and initialize
-set rtp+=~/.vim/bundle/Vundle.vim
-call vundle#begin()
-" alternatively, pass a path where Vundle should install plugins
-"call vundle#begin('~/some/path/here')
+call plug#begin('~/.vim/plugged')
 
-" let Vundle manage Vundle, required
-Plugin 'gmarik/Vundle.vim'
+Plug 'vim-airline/vim-airline'
+Plug 'vim-airline/vim-airline-themes'
+Plug 'edkolev/tmuxline.vim'
+Plug 'edkolev/promptline.vim'
+Plug 'christoomey/vim-tmux-navigator'
+Plug 'terryma/vim-expand-region'
+Plug 'chriskempson/base16-vim'
+Plug 'raimondi/delimitmate'
+Plug 'scrooloose/nerdtree'
+Plug 'kien/ctrlp.vim'
+Plug 'godlygeek/tabular'
+Plug 'tpope/vim-fugitive'
+Plug 'tpope/vim-repeat'
+Plug 'tpope/vim-surround'
+Plug 'tpope/vim-rails'
+Plug 'w0rp/ale'
+Plug 'tpope/vim-dispatch'
+Plug 'ngmy/vim-rubocop'
+Plug 'elixir-lang/vim-elixir'
+Plug 'airblade/vim-gitgutter'
 
-" The following are examples of different formats supported.
-" Keep Plugin commands between vundle#begin/end.
-" All of your Plugins must be added before the following line
+Plug 'autozimu/LanguageClient-neovim', {
+    \ 'branch': 'next',
+    \ 'do': 'bash install.sh',
+    \ }
 
-Plugin 'dyng/ctrlsf.vim'
-Plugin 'vim-airline/vim-airline'
-Plugin 'vim-airline/vim-airline-themes'
-Bundle 'SirVer/ultisnips'
-Bundle 'honza/vim-snippets'
-Plugin 'edkolev/tmuxline.vim'
-Plugin 'edkolev/promptline.vim'
-Plugin 'christoomey/vim-tmux-navigator'
-Plugin 'terryma/vim-expand-region'
-Plugin 'chriskempson/base16-vim'
-Plugin 'raimondi/delimitmate'
-Plugin 'scrooloose/nerdtree'
-Plugin 'kien/ctrlp.vim'
-Plugin 'godlygeek/tabular'
-Plugin 'tpope/vim-fugitive'
-Plugin 'tpope/vim-repeat'
-Plugin 'tpope/vim-surround'
-Plugin 'w0rp/ale'
-Plugin 'tpope/vim-dispatch'
-Plugin 'rking/ag.vim'
-Plugin 'ngmy/vim-rubocop'
-Plugin 'elixir-lang/vim-elixir'
-Plugin 'airblade/vim-gitgutter'
-Plugin 'valloric/youcompleteme'
+if has('nvim')
+  Plug 'Shougo/deoplete.nvim', { 'do': ':UpdateRemotePlugins' }
+else
+  Plug 'Shougo/deoplete.nvim'
+  Plug 'roxma/nvim-yarp'
+  Plug 'roxma/vim-hug-neovim-rpc'
+endif
+
+Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
+Plug 'junegunn/fzf.vim'
 
 " Reason stuff
-Plugin 'reasonml-editor/vim-reason'
+Plug 'reasonml-editor/vim-reason-plus'
 
-" Javscript Stuff
-Plugin 'mxw/vim-jsx'
-Plugin 'seethruhead/vim-react-snippets'
-Plugin 'jelera/vim-javascript-syntax'
-Plugin 'marijnh/tern_for_vim'
-Plugin 'pangloss/vim-javascript'
-Plugin 'vim-scripts/tComment'
+" Javascript Stuff
+Plug 'mxw/vim-jsx'
+Plug 'seethruhead/vim-react-snippets'
+Plug 'jelera/vim-javascript-syntax'
+Plug 'pangloss/vim-javascript'
+Plug 'vim-scripts/tComment'
+Plug 'carlitux/deoplete-ternjs'
+" Plug 'styled-components/vim-styled-components', { 'branch': 'main' }
 
-Plugin 'posva/vim-vue'
+Plug 'posva/vim-vue'
 
 " CSS
-Plugin 'hail2u/vim-css3-syntax'
-Plugin 'cakebaker/scss-syntax.vim'
+Plug 'hail2u/vim-css3-syntax'
+Plug 'cakebaker/scss-syntax.vim'
 
+call plug#end()
 
+let g:LanguageClient_serverCommands = {
+    \ 'reason': ['/absolute/path/to/reason-language-server.exe'],
+    \ }
 
-call vundle#end()            " required
-filetype plugin indent on    " required
-" To ignore plugin indent changes, instead use:
-"filetype plugin on
-"
-" Brief help
-" :PluginList       - lists configured plugins
-" :PluginInstall    - installs plugins; append `!` to update or just :PluginUpdate
-" :PluginSearch foo - searches for foo; append `!` to refresh local cache
-" :PluginClean      - confirms removal of unused plugins; append `!` to auto-approve removal
-"
 let g:ctrlp_custom_ignore = 'node_modules\|DS_Store\|git'
 
 " Change mapleader
@@ -79,21 +77,20 @@ nmap <space>sf <Plug>CtrlSFPrompt
 nmap <space>ca :%s/
 nmap <space>vv <Plug>CtrlSFCwordExec
 
-" Ultisnips config
-let g:UltiSnipsExpandTrigger="<c-e>"
-let g:UltiSnipsJumpForwardTrigger="<c-b>"
-let g:UltiSnipsJumpBackwardTrigger="<c-z>"
-
 " Close completion window
 autocmd CompleteDone * pclose
-" Javscript tern completion
-autocmd FileType javascript setlocal omnifunc=tern#Complete
+" Use deoplete.
+let g:deoplete#enable_at_startup = 1
+call deoplete#custom#var('file', 'enable_buffer_path', v:true)
+
+" deoplete tab-complete
+inoremap <expr><tab> pumvisible() ? "\<c-n>" : "\<tab>"
 
 set background=dark
 colorscheme base16-eighties
 let g:airline_powerline_fonts = 1
 let g:airline_theme='base16'
-set guifont=Sauce\ Code\ Powerline:h14
+set guifont=Source\ Code\ Pro\ for\ Powerline:h14
 
 " Javscript Config
 let g:jsx_ext_required = 0 " Allow JSX in normal JS files
@@ -103,6 +100,16 @@ let g:syntastic_javascript_checkers = ['eslint']
 let g:ale_linters = {
 \   'javascript': ['eslint'],
 \}
+
+let g:ale_fixers = {}
+let g:ale_set_highlights = 0
+
+let g:ale_fixers.javascript = [
+\ 'eslint',
+\]
+
+let g:ale_fix_on_save = 0
+
 let g:ale_lint_on_text_changed = 'never'
 let g:ale_lint_on_enter = 0
 
@@ -253,6 +260,7 @@ autocmd VimEnter * if argc() == 0 && !exists("s:std_in") | NERDTree | endif
 set hidden
 map <C-n> :NERDTreeToggle<CR>
 let NERDTreeShowHidden=1
+let NERDTreeQuitOnOpen=0
 
 autocmd bufenter * if (winnr("$") == 1 && exists("b:NERDTreeType") && b:NERDTreeType == "primary") | q | endif
 
