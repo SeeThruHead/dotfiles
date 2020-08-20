@@ -6,9 +6,9 @@ windows:
       root: ~/Code/infl/hub
       layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
       panes:
-        - rvm use 2.3.3; vim
-        - rvm use 2.3.3
-        - rvm use 2.3.3
+        - rvm use 2.4.9; vim
+        - rvm use 2.4.9
+        - rvm use 2.4.9
   - hedwig-be:
       root: ~/Code/infl/hedwig
       layout: 73a2,238x53,0,0{180x53,0,0,16,57x53,181,0[57x31,181,0,17,57x21,181,32,18]}
