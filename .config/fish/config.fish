@@ -7,3 +7,11 @@ set -x GPG_TTY (tty)
 
 set -x AWS_DEFAULT_REGION us-east-1
 set -x AWS_DEFAULT_PROFILE saml
+
+nvm-use
+
+# >>> conda initialize >>>
+# !! Contents within this block are managed by 'conda init' !!
+eval /Users/user/opt/miniconda3/bin/conda "shell.fish" "hook" $argv | source
+# <<< conda initialize <<<
+
