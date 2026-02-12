@@ -1,0 +1,7 @@
+general.import = [
+  "~/.config/alacritty/themes/themes/tomorrow_night.toml"
+]
+
+# Font config:
+font.size = 16
+font.normal = { family = "SauceCodePro Nerd Font",  style = "Medium" }
