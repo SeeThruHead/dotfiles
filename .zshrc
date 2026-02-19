@@ -1,26 +1,31 @@
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+# Ensure Homebrew is in PATH (for non-login interactive shells)
+if [[ -z "$HOMEBREW_PREFIX" ]]; then
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  elif [[ -x /usr/local/bin/brew ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+  fi
+fi
 
-. /usr/local/etc/profile.d/z.sh
+# z - directory jumping
+[[ -f "$HOMEBREW_PREFIX/etc/profile.d/z.sh" ]] && . "$HOMEBREW_PREFIX/etc/profile.d/z.sh"
 
-alias gapi="go install ./cmd/advocate-api && advocate-api"
+# Aliases
 alias dc="docker-compose"
 alias gs="git status"
 alias ga="git add --all"
 
-export PATH=$PATH:~/go/bin
+# Go
+[[ -d ~/go/bin ]] && export PATH="$PATH:$HOME/go/bin"
 
-# Python 3.14
-export PATH="/usr/local/opt/python@3.14/libexec/bin:$PATH"
+# Python (use whatever version is available via brew)
+local python_path="$HOMEBREW_PREFIX/opt/python@3.14/libexec/bin"
+[[ -d "$python_path" ]] && export PATH="$python_path:$PATH"
 
-# bun completions
-[ -s "/Users/shanekeulen/.bun/_bun" ] && source "/Users/shanekeulen/.bun/_bun"
-
-
-# bun
+# Bun
 export BUN_INSTALL="$HOME/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
+[[ -d "$BUN_INSTALL" ]] && export PATH="$BUN_INSTALL/bin:$PATH"
+[[ -s "$BUN_INSTALL/_bun" ]] && source "$BUN_INSTALL/_bun"
 
-# Added by CodeRabbit CLI installer
-export PATH="/Users/shanekeulen/.local/bin:$PATH"
+# Local bin
+[[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
