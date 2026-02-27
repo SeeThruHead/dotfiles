@@ -52,6 +52,7 @@ if [[ $- == *i* ]]; then
   alias ll='eza -la --icons --git'
   alias lt='eza --tree --level=2 --icons'
 
+  alias cat='bat'
   alias mactop='sudo mactop'
 fi
 
