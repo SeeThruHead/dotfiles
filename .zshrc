@@ -41,3 +41,19 @@ export BUN_INSTALL="$HOME/.bun"
 # Install on new machine: git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ~/powerlevel10k
 source ~/powerlevel10k/powerlevel10k.zsh-theme
 [[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
+
+# Dotfiles bin
+[[ -d "$HOME/.dotfiles/bin" ]] && export PATH="$HOME/.dotfiles/bin:$PATH"
+
+# Interactive shell tools
+if [[ $- == *i* ]]; then
+  # eza (modern ls)
+  alias ls='eza --icons --grid --group-directories-first'
+  alias ll='eza -la --icons --git'
+  alias lt='eza --tree --level=2 --icons'
+
+  alias mactop='sudo mactop'
+fi
+
+# zoxide (smart cd)
+eval "$(zoxide init zsh)"
