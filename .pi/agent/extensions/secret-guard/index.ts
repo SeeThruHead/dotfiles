@@ -3,13 +3,13 @@
  *
  * Prevents secrets from leaking into the LLM context by:
  *
- * 1. Blocking read/write/edit of .env files and known secret files
+ * 1. Blocking read/edit of .env files and known secret files
  * 2. Blocking bash commands that could expose env vars or secret files
  * 3. Redacting known secret values from ALL tool results as a safety net
- * 4. Providing `secret-env` CLI (in ~/.local/bin) as the safe alternative
- * 5. Prompting user to whitelist files/commands when blocked
+ * 4. Allowing writes to new .env files (LLM has no secrets to leak)
+ * 5. Whitelist support via /secrets-whitelist command
  *
- * The `secret-env` CLI (bash script) is what the LLM should use instead:
+ * The `secret-env` CLI (in ~/.local/bin) is the safe alternative:
  *   secret-env read <file>                   Show .env with values redacted (<SET>/<EMPTY>)
  *   secret-env check <file> <KEY>            Check if a variable exists and has a value
  *   secret-env list [dir]                    List all .env files and their variable names
@@ -17,7 +17,7 @@
  *   secret-env keys <file>                   List just the variable names
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, basename, dirname, join } from "node:path";
@@ -27,8 +27,8 @@ import { homedir } from "node:os";
 // --- Whitelist ---
 
 interface Whitelist {
-  files: string[];     // Whitelisted file paths (exact or glob-like)
-  commands: string[];  // Whitelisted bash command patterns
+  files: string[];
+  commands: string[];
 }
 
 const GLOBAL_WHITELIST_PATH = join(homedir(), ".pi", "agent", "secret-guard.json");
@@ -52,13 +52,18 @@ function saveWhitelist(path: string, whitelist: Whitelist): void {
   writeFileSync(path, JSON.stringify(whitelist, null, 2) + "\n", "utf-8");
 }
 
-function isWhitelistedFile(filePath: string, cwd: string): boolean {
+function getMergedWhitelist(cwd: string): Whitelist {
   const global = loadWhitelist(GLOBAL_WHITELIST_PATH);
   const project = loadWhitelist(getProjectWhitelistPath(cwd));
-  const allFiles = [...global.files, ...project.files];
+  return {
+    files: [...global.files, ...project.files],
+    commands: [...global.commands, ...project.commands],
+  };
+}
 
-  for (const entry of allFiles) {
-    // Exact match or ends-with match
+function isWhitelistedFile(filePath: string, cwd: string): boolean {
+  const wl = getMergedWhitelist(cwd);
+  for (const entry of wl.files) {
     if (filePath === entry || filePath.endsWith(entry) || basename(filePath) === entry) {
       return true;
     }
@@ -67,112 +72,10 @@ function isWhitelistedFile(filePath: string, cwd: string): boolean {
 }
 
 function isWhitelistedCommand(command: string, cwd: string): boolean {
-  const global = loadWhitelist(GLOBAL_WHITELIST_PATH);
-  const project = loadWhitelist(getProjectWhitelistPath(cwd));
-  const allCommands = [...global.commands, ...project.commands];
-
-  for (const entry of allCommands) {
-    if (command.includes(entry)) {
-      return true;
-    }
+  const wl = getMergedWhitelist(cwd);
+  for (const entry of wl.commands) {
+    if (command.includes(entry)) return true;
   }
-  return false;
-}
-
-async function promptWhitelistFile(
-  filePath: string,
-  cwd: string,
-  ctx: ExtensionContext
-): Promise<boolean> {
-  if (!ctx.hasUI) return false;
-
-  const choice = await ctx.ui.select(
-    `🔒 Blocked: "${filePath}"\n\nThis looks like a secret file. Allow access?`,
-    [
-      "Block (default)",
-      "Allow this once",
-      "Whitelist for this project",
-      "Whitelist globally",
-    ]
-  );
-
-  if (!choice || choice === "Block (default)") return false;
-  if (choice === "Allow this once") return true;
-
-  const entry = basename(filePath);
-
-  if (choice === "Whitelist for this project") {
-    const wlPath = getProjectWhitelistPath(cwd);
-    const wl = loadWhitelist(wlPath);
-    if (!wl.files.includes(entry)) {
-      wl.files.push(entry);
-      saveWhitelist(wlPath, wl);
-      ctx.ui.notify(`Added "${entry}" to project whitelist`, "info");
-    }
-    return true;
-  }
-
-  if (choice === "Whitelist globally") {
-    const wl = loadWhitelist(GLOBAL_WHITELIST_PATH);
-    if (!wl.files.includes(entry)) {
-      wl.files.push(entry);
-      saveWhitelist(GLOBAL_WHITELIST_PATH, wl);
-      ctx.ui.notify(`Added "${entry}" to global whitelist`, "info");
-    }
-    return true;
-  }
-
-  return false;
-}
-
-async function promptWhitelistCommand(
-  command: string,
-  reason: string,
-  cwd: string,
-  ctx: ExtensionContext
-): Promise<boolean> {
-  if (!ctx.hasUI) return false;
-
-  // Truncate long commands for display
-  const display = command.length > 80 ? command.slice(0, 80) + "..." : command;
-
-  const choice = await ctx.ui.select(
-    `🔒 Blocked: ${reason}\n\nCommand: ${display}\n\nAllow this?`,
-    [
-      "Block (default)",
-      "Allow this once",
-      "Whitelist for this project",
-      "Whitelist globally",
-    ]
-  );
-
-  if (!choice || choice === "Block (default)") return false;
-  if (choice === "Allow this once") return true;
-
-  // Use a meaningful snippet of the command as the whitelist entry
-  const entry = command.trim().slice(0, 100);
-
-  if (choice === "Whitelist for this project") {
-    const wlPath = getProjectWhitelistPath(cwd);
-    const wl = loadWhitelist(wlPath);
-    if (!wl.commands.includes(entry)) {
-      wl.commands.push(entry);
-      saveWhitelist(wlPath, wl);
-      ctx.ui.notify(`Added command to project whitelist`, "info");
-    }
-    return true;
-  }
-
-  if (choice === "Whitelist globally") {
-    const wl = loadWhitelist(GLOBAL_WHITELIST_PATH);
-    if (!wl.commands.includes(entry)) {
-      wl.commands.push(entry);
-      saveWhitelist(GLOBAL_WHITELIST_PATH, wl);
-      ctx.ui.notify(`Added command to global whitelist`, "info");
-    }
-    return true;
-  }
-
   return false;
 }
 
@@ -274,22 +177,29 @@ function redactSecrets(text: string, secrets: Map<string, string>): string {
 // --- Dangerous Bash Command Detection ---
 
 const SECRET_FILE_BASH_PATTERNS = [
-  /\bcat\s+.*\.env\b/,
-  /\bless\s+.*\.env\b/,
-  /\bmore\s+.*\.env\b/,
-  /\bhead\s+.*\.env\b/,
-  /\btail\s+.*\.env\b/,
-  /\bsed\s+.*\.env\b/,
-  /\bawk\s+.*\.env\b/,
-  /\b(source|\.)\s+.*\.env\b/,
+  // .env file access — match path-like references (not inside quotes/messages)
+  // Covers: cat .env, cp .env, dd if=.env, tee .env, mv .env, etc.
+  /[\/\s=]\.env\b/,
+  /^\.env\b/,
+  // Glob evasion (.en? .en*)
+  /[\/\s]\.en[?*]/,
+  // Secret/credential files
   /\bcat\s+.*secret/i,
   /\bcat\s+.*credential/i,
   /\bcat\s+.*\.netrc\b/,
   /\bcat\s+.*\.pgpass\b/,
-  /\bcat\s+.*id_rsa\b/,
-  /\bcat\s+.*id_ed25519\b/,
+  /\bcat\s+.*id_rsa/,
+  /\bcat\s+.*id_ed25519/,
   /\bcat\s+.*\.pem\b/,
   /\bcat\s+.*\.key\b/,
+  /\bdd\s+.*secret/i,
+  /\bdd\s+.*credential/i,
+  /\bdd\s+.*\.netrc\b/,
+  /\bdd\s+.*\.pgpass\b/,
+  /\bdd\s+.*id_rsa/,
+  /\bdd\s+.*id_ed25519/,
+  /\bdd\s+.*\.pem\b/,
+  /\bdd\s+.*\.key\b/,
 ];
 
 const ENV_LEAK_PATTERNS = [
@@ -306,13 +216,22 @@ const ENV_LEAK_PATTERNS = [
   /\bpython[3]?\b.*os\.environ/,
 ];
 
+// Strip quoted strings from a command so we don't match .env inside commit messages etc.
+function stripQuotedStrings(command: string): string {
+  return command
+    .replace(/"[^"]*"/g, '""')
+    .replace(/'[^']*'/g, "''");
+}
+
 function isDangerousBashCommand(command: string): { dangerous: boolean; reason: string } {
   if (/\bsecret-env\b/.test(command)) {
     return { dangerous: false, reason: "" };
   }
 
+  // Check file patterns against command with quoted strings removed
+  const unquoted = stripQuotedStrings(command);
   for (const pattern of SECRET_FILE_BASH_PATTERNS) {
-    if (pattern.test(command)) {
+    if (pattern.test(unquoted)) {
       return { dangerous: true, reason: `Command accesses a secret file` };
     }
   }
@@ -344,15 +263,8 @@ export default function (pi: ExtensionAPI) {
         "secret-guard",
         ctx.ui.theme.fg("muted", `🔒 ${secrets.size} secrets from ${fileCount} file${fileCount !== 1 ? "s" : ""}`)
       );
-      ctx.ui.notify(
-        `Secret Guard: Protecting ${secrets.size} values from ${fileCount} env file${fileCount !== 1 ? "s" : ""}`,
-        "info"
-      );
     } else {
-      ctx.ui.setStatus(
-        "secret-guard",
-        ctx.ui.theme.fg("muted", `🔒 active`)
-      );
+      ctx.ui.setStatus("secret-guard", ctx.ui.theme.fg("muted", `🔒 active`));
     }
   });
 
@@ -377,52 +289,42 @@ If you need the user to set a value, tell them to open the file in their editor.
     };
   });
 
-  // --- Block tool calls (with whitelist prompt) ---
+  // --- Block tool calls (no prompts, just block with short message) ---
   pi.on("tool_call", async (event, ctx) => {
     // Block read of secret files
     if (isToolCallEventType("read", event)) {
       const filePath = resolve(ctx.cwd, event.input.path);
       if (isSecretFile(filePath) && !isWhitelistedFile(filePath, ctx.cwd)) {
-        const allowed = await promptWhitelistFile(filePath, ctx.cwd, ctx);
-        if (!allowed) {
-          return {
-            block: true,
-            reason: `🔒 Blocked: "${event.input.path}" is a secret file. Use \`secret-env read ${event.input.path}\` via bash instead.`,
-          };
-        }
+        return {
+          block: true,
+          reason: `🔒 Blocked: "${event.input.path}" is a secret file. Use \`secret-env read ${event.input.path}\` via bash instead. To whitelist, ask the user to run /secrets-whitelist.`,
+        };
       }
     }
 
-    // Block write/edit of secret files
-    if (event.toolName === "write" || event.toolName === "edit") {
+    // Block edit of secret files (could expose existing values in oldText)
+    if (event.toolName === "edit") {
       const filePath = resolve(ctx.cwd, (event.input as any).path);
       if (isSecretFile(filePath) && !isWhitelistedFile(filePath, ctx.cwd)) {
-        const allowed = await promptWhitelistFile(filePath, ctx.cwd, ctx);
-        if (!allowed) {
-          return {
-            block: true,
-            reason: `🔒 Blocked: Cannot write/edit "${(event.input as any).path}". Ask the user to edit this file directly in their editor.`,
-          };
-        }
+        return {
+          block: true,
+          reason: `🔒 Blocked: Cannot edit "${(event.input as any).path}" — existing values could leak. Ask the user to edit directly. To whitelist, ask the user to run /secrets-whitelist.`,
+        };
       }
     }
+
+    // Allow writing NEW .env files (LLM has no secrets to put in them)
+    // Block only if file exists (editing via overwrite could expose on re-read)
+    // Actually: writes are fine — the LLM doesn't have secrets. Reads are the problem.
 
     // Block dangerous bash commands
     if (isToolCallEventType("bash", event)) {
       const check = isDangerousBashCommand(event.input.command);
       if (check.dangerous && !isWhitelistedCommand(event.input.command, ctx.cwd)) {
-        const allowed = await promptWhitelistCommand(
-          event.input.command,
-          check.reason,
-          ctx.cwd,
-          ctx
-        );
-        if (!allowed) {
-          return {
-            block: true,
-            reason: `🔒 Blocked: ${check.reason}. Use \`secret-env\` CLI instead, or ask the user to run this in their own terminal.`,
-          };
-        }
+        return {
+          block: true,
+          reason: `🔒 Blocked: ${check.reason}. Use \`secret-env\` CLI instead. To whitelist, ask the user to run /secrets-whitelist.`,
+        };
       }
     }
 
@@ -453,7 +355,7 @@ If you need the user to set a value, tell them to open the file in their editor.
   // --- Commands ---
 
   pi.registerCommand("secrets-reload", {
-    description: "Reload secret values from all .env files (run after editing env files)",
+    description: "Reload secret values from all .env files",
     handler: async (_args, ctx) => {
       const result = loadSecrets(ctx.cwd);
       secrets = result.secrets;
@@ -478,43 +380,55 @@ If you need the user to set a value, tell them to open the file in their editor.
   pi.registerCommand("secrets", {
     description: "Show secret guard status and whitelist",
     handler: async (_args, ctx) => {
-      const global = loadWhitelist(GLOBAL_WHITELIST_PATH);
-      const project = loadWhitelist(getProjectWhitelistPath(ctx.cwd));
-
+      const wl = getMergedWhitelist(ctx.cwd);
       const lines = [
         "🔒 Secret Guard Status",
         "",
         `Protected values: ${secrets.size} (from .env files)`,
-        `Env files found: ${envFiles.length}`,
+        `Env files: ${envFiles.length}`,
         ...envFiles.map((f) => `  📄 ${f}`),
-        "",
       ];
 
-      if (global.files.length > 0 || global.commands.length > 0) {
-        lines.push("Global whitelist:");
-        for (const f of global.files) lines.push(`  📄 ${f}`);
-        for (const c of global.commands) lines.push(`  💻 ${c}`);
-        lines.push("");
+      if (wl.files.length > 0 || wl.commands.length > 0) {
+        lines.push("", "Whitelist:");
+        for (const f of wl.files) lines.push(`  📄 ${f}`);
+        for (const c of wl.commands) lines.push(`  💻 ${c}`);
       }
 
-      if (project.files.length > 0 || project.commands.length > 0) {
-        lines.push("Project whitelist:");
-        for (const f of project.files) lines.push(`  📄 ${f}`);
-        for (const c of project.commands) lines.push(`  💻 ${c}`);
-        lines.push("");
-      }
-
-      if (global.files.length === 0 && global.commands.length === 0 &&
-          project.files.length === 0 && project.commands.length === 0) {
-        lines.push("No whitelisted files or commands.");
-        lines.push("");
-      }
-
-      lines.push(
-        "CLI: secret-env read|check|list|copy|keys",
-        "Commands: /secrets, /secrets-reload, /secrets-clear"
-      );
+      lines.push("", "CLI: secret-env read|check|list|copy|keys");
       ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
+
+  pi.registerCommand("secrets-whitelist", {
+    description: "Add a file or command to the whitelist",
+    handler: async (args, ctx) => {
+      const scope = await ctx.ui.select("Whitelist scope:", ["Project", "Global", "Cancel"]);
+      if (!scope || scope === "Cancel") return;
+
+      const type = await ctx.ui.select("What to whitelist:", ["File", "Command", "Cancel"]);
+      if (!type || type === "Cancel") return;
+
+      const value = await ctx.ui.input(
+        type === "File" ? "File name or path:" : "Command or substring:",
+        args || ""
+      );
+      if (!value) return;
+
+      const path = scope === "Project"
+        ? getProjectWhitelistPath(ctx.cwd)
+        : GLOBAL_WHITELIST_PATH;
+
+      const wl = loadWhitelist(path);
+      const list = type === "File" ? wl.files : wl.commands;
+
+      if (!list.includes(value)) {
+        list.push(value);
+        saveWhitelist(path, wl);
+        ctx.ui.notify(`Added "${value}" to ${scope.toLowerCase()} ${type.toLowerCase()} whitelist`, "info");
+      } else {
+        ctx.ui.notify(`"${value}" is already whitelisted`, "info");
+      }
     },
   });
 
@@ -533,18 +447,13 @@ If you need the user to set a value, tell them to open the file in their editor.
       const empty: Whitelist = { files: [], commands: [] };
 
       if (choice === "Project only" || choice === "Both") {
-        const path = getProjectWhitelistPath(ctx.cwd);
-        if (existsSync(path)) {
-          saveWhitelist(path, empty);
-          ctx.ui.notify("Cleared project whitelist", "info");
-        }
+        saveWhitelist(getProjectWhitelistPath(ctx.cwd), empty);
+        ctx.ui.notify("Cleared project whitelist", "info");
       }
 
       if (choice === "Global only" || choice === "Both") {
-        if (existsSync(GLOBAL_WHITELIST_PATH)) {
-          saveWhitelist(GLOBAL_WHITELIST_PATH, empty);
-          ctx.ui.notify("Cleared global whitelist", "info");
-        }
+        saveWhitelist(GLOBAL_WHITELIST_PATH, empty);
+        ctx.ui.notify("Cleared global whitelist", "info");
       }
     },
   });
