@@ -1,0 +1,54 @@
+#!/bin/bash
+# Run pi sandboxed against the current directory.
+# Usage: pi-sandbox [pi args...]
+#
+# Put this on your PATH. It builds the image once, then runs pi
+# with only the current directory mounted. No access to anything else.
+# Includes Chrome + Xvfb for browser automation (non-headless).
+
+set -e
+
+IMAGE_NAME="pi-sandbox"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+# Rebuild if image missing or Dockerfile changed
+NEEDS_BUILD=false
+if [[ "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" == "" ]]; then
+  NEEDS_BUILD=true
+elif [[ -f "$SCRIPT_DIR/.build-hash" ]]; then
+  CURRENT_HASH=$(cat "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR/entrypoint.sh" | shasum | cut -d' ' -f1)
+  if [[ "$CURRENT_HASH" != "$(cat "$SCRIPT_DIR/.build-hash")" ]]; then
+    NEEDS_BUILD=true
+  fi
+else
+  NEEDS_BUILD=true
+fi
+
+if $NEEDS_BUILD; then
+  echo "Building pi-sandbox image..."
+  docker build -t "$IMAGE_NAME" "$SCRIPT_DIR"
+  cat "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR/entrypoint.sh" | shasum | cut -d' ' -f1 > "$SCRIPT_DIR/.build-hash"
+fi
+
+# Optional volume mounts for SSH and npm
+EXTRA_VOLS=()
+[[ -d "$HOME/.ssh" ]] && EXTRA_VOLS+=(-v "$HOME/.ssh:/root/.ssh-host:ro")
+[[ -f "$HOME/.npmrc" ]] && EXTRA_VOLS+=(-v "$HOME/.npmrc:/root/.npmrc:ro")
+[[ -f "$HOME/.config/npm/npmrc" ]] && EXTRA_VOLS+=(-v "$HOME/.config/npm/npmrc:/root/.npmrc:ro")
+[[ -f "$HOME/.tmux.conf" ]] && EXTRA_VOLS+=(-v "$HOME/.tmux.conf:/root/.tmux.conf:ro")
+[[ -f "$HOME/.config/tmux/tmux.conf" ]] && EXTRA_VOLS+=(-v "$HOME/.config/tmux/tmux.conf:/root/.config/tmux/tmux.conf:ro")
+
+
+REPO_DIR="/pi-sandbox/$(basename "$(pwd)")"
+
+docker run -it --rm \
+  --mount type=tmpfs,destination=/pi-sandbox,tmpfs-mode=0555 \
+  -v "$(pwd):$REPO_DIR" \
+  -v "$HOME/.pi:/root/.pi" \
+  -w "$REPO_DIR" \
+  "${EXTRA_VOLS[@]}" \
+  -e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+  -e OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+  -e GOOGLE_API_KEY="${GOOGLE_API_KEY:-}" \
+  --shm-size=2g \
+  "$IMAGE_NAME" "$@"
