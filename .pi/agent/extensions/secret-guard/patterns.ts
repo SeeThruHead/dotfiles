@@ -1,146 +1,154 @@
 import type { DangerousCommand } from "./types.js";
 
-const BLOCKED_PATH_PATTERNS = [
-  /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\/\.config\/gh\//,
-  /id_rsa/, /id_ed25519/, /\.pem$/, /\.key$/,
-] as const;
+type Verdict = "safe" | "secret" | "skip";
+type ValueRule = (key: string, value: string) => Verdict;
+type TextRule = (text: string) => boolean;
 
-const ANCHORED_SECRET_VALUE_PATTERNS = [
-  /^sk-[a-zA-Z0-9\-_]{20,}/,
-  /^sk_live_[a-zA-Z0-9]{20,}/,
-  /^sk_test_[a-zA-Z0-9]{20,}/,
-  /^pk_live_[a-zA-Z0-9]{20,}/,
-  /^rk_live_[a-zA-Z0-9]{20,}/,
-  /^AKIA[A-Z0-9]{16}$/,
-  /^ghp_[a-zA-Z0-9]{36,}/,
-  /^ghs_[a-zA-Z0-9]{36,}/,
-  /^gho_[a-zA-Z0-9]{36,}/,
-  /^ghu_[a-zA-Z0-9]{36,}/,
-  /^glpat-[a-zA-Z0-9\-_]{20,}/,
-  /^xox[bpras]-[a-zA-Z0-9\-]{20,}/,
-  /^SG\.[a-zA-Z0-9\-_]{22,}/,
-  /^bearer\s+[a-zA-Z0-9\-_.]{20,}/i,
-  /^whsec_[a-zA-Z0-9]{20,}/,
-  /^eyJ[a-zA-Z0-9\-_]{20,}/,
-  /^(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/,
-  /^-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----/,
-  /^-----BEGIN\s+EC\s+PRIVATE\s+KEY-----/,
-  /^-----BEGIN\s+OPENSSH\s+PRIVATE\s+KEY-----/,
-] as const;
+// --- Value classification pipeline ---
+// Evaluated top-to-bottom, first non-"skip" verdict wins.
 
-const INLINE_SECRET_PATTERNS = [
-  /\bsk-[a-zA-Z0-9\-_]{20,}/,
-  /\bsk_live_[a-zA-Z0-9]{20,}/,
-  /\bsk_test_[a-zA-Z0-9]{20,}/,
-  /\bAKIA[A-Z0-9]{16}\b/,
-  /\bghp_[a-zA-Z0-9]{36,}/,
-  /\bghs_[a-zA-Z0-9]{36,}/,
-  /\bgho_[a-zA-Z0-9]{36,}/,
-  /\bghu_[a-zA-Z0-9]{36,}/,
-  /\bglpat-[a-zA-Z0-9\-_]{20,}/,
-  /\bxox[bpras]-[a-zA-Z0-9\-]{20,}/,
-  /\bSG\.[a-zA-Z0-9\-_]{22,}/,
-  /\bwhsec_[a-zA-Z0-9]{20,}/,
-  /\beyJ[a-zA-Z0-9\-_]{20,}\./,
-  /\b(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/,
-  /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----/,
-  /-----BEGIN\s+EC\s+PRIVATE\s+KEY-----/,
-  /-----BEGIN\s+OPENSSH\s+PRIVATE\s+KEY-----/,
-] as const;
+const valueRules: ValueRule[] = [
+  // Empty values are never secrets
+  (_k, v) => v.trim().length === 0 ? "safe" : "skip",
 
-const SECRET_KEY_NAME_PATTERNS = [
-  /secret/i, /password/i, /passwd/i, /token/i,
-  /api[_-]?key/i, /private[_-]?key/i, /access[_-]?key/i,
-  /auth/i, /credential/i,
-] as const;
+  // Trivially safe values: booleans, numbers, common env names
+  (_k, v) => /^(true|false|yes|no|on|off|0|1)$/i.test(v.trim()) ? "safe" : "skip",
+  (_k, v) => /^\d+$/.test(v.trim()) ? "safe" : "skip",
+  (_k, v) => /^(development|production|staging|test|debug|info|warn|error)$/i.test(v.trim()) ? "safe" : "skip",
+  (_k, v) => /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$/i.test(v.trim()) ? "safe" : "skip",
+  (_k, v) => v.trim().length < 8 && /^[a-zA-Z0-9._-]+$/.test(v.trim()) ? "safe" : "skip",
 
-const SAFE_KEY_NAME_PATTERNS = [
-  /^port$/i, /^host$/i, /^hostname$/i, /^url$/i,
-  /^base[_-]?url$/i, /^api[_-]?url$/i, /^app[_-]?url$/i,
-  /^domain$/i, /^debug$/i, /^verbose$/i, /^log[_-]?level$/i,
-  /^node[_-]?env$/i, /^env$/i, /^environment$/i,
-  /^region$/i, /^timezone$/i, /^tz$/i, /^lang$/i, /^locale$/i,
-  /^enabled$/i, /^disabled$/i,
-  /^app[_-]?name$/i, /^project[_-]?name$/i, /^version$/i,
-  /^max/i, /^min/i, /^timeout/i, /^retries$/i,
-  /^workers$/i, /^threads$/i, /^pool[_-]?size$/i,
-] as const;
-
-const ENV_DUMP_PATTERNS = [
-  /\becho\s+.*\$[{A-Za-z_]/,
-  /\bprintf\s+.*\$[{A-Za-z_]/,
-  /(?<!\.)(?<!\w)(env|printenv)(?!\w)/,
-  /\bset\s*($|\||;|&)/,
-  /\bexport\s+-p\b/,
-  /\bdeclare\s+-x\b/,
-  /\bdocker\s+inspect\b/,
-  /\bcurl\b.*(-H|--header)\s+['"]?(Authorization|X-Api-Key)/i,
-  /\bnode\b.*process\.env/,
-  /\bpython[3]?\b.*os\.environ/,
-] as const;
-
-const someMatch = (patterns: readonly RegExp[], text: string) =>
-  patterns.some((p) => p.test(text));
-
-export const isBlockedPath = (path: string) => someMatch(BLOCKED_PATH_PATTERNS, path);
-export const matchesAnchoredSecretPattern = (value: string) => someMatch(ANCHORED_SECRET_VALUE_PATTERNS, value);
-export const containsInlineSecretPattern = (text: string) => someMatch(INLINE_SECRET_PATTERNS, text);
-export const hasSecretKeyName = (key: string) => someMatch(SECRET_KEY_NAME_PATTERNS, key);
-export const hasSafeKeyName = (key: string) => someMatch(SAFE_KEY_NAME_PATTERNS, key);
-export const isEnvDumpCommand = (command: string) => someMatch(ENV_DUMP_PATTERNS, command);
-
-export const isSecretEnvCli = (command: string) => /\bsecret-env\b/.test(command);
-
-export const isSafeValue = (value: string): boolean => {
-  const v = value.trim();
-  return (
-    /^(true|false|yes|no|on|off|0|1)$/i.test(v) ||
-    /^\d+$/.test(v) ||
-    /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$/i.test(v) ||
-    (v.length < 8 && /^[a-zA-Z0-9._-]+$/.test(v)) ||
-    /^(development|production|staging|test|debug|info|warn|error)$/i.test(v) ||
-    isLocalConnectionString(v) ||
-    isCommonLocalDefault(v)
-  );
-};
-
-export const isLocalConnectionString = (value: string): boolean => {
-  const v = value.trim();
-  const localHosts = /(@|\/\/)(localhost|127\.0\.0\.1|0\.0\.0\.0|::1|host\.docker\.internal)(:|\/|$)/;
-  return /^(postgres|mysql|mongodb|redis|amqp|http|https):\/\//.test(v) && localHosts.test(v);
-};
-
-export const isCommonLocalDefault = (value: string): boolean => {
-  const v = value.trim().toLowerCase();
-  const defaults = [
+  // Common local dev defaults: password, redis, root, changeme, etc.
+  (_k, v) => [
     "redis", "password", "passwd", "pass", "secret",
     "root", "admin", "test", "guest", "default",
     "changeme", "example", "placeholder",
     "your_secret_here", "your_password_here",
     "xxx", "xxxxxxxx", "todo", "fixme",
-  ];
-  return defaults.includes(v);
-};
+  ].includes(v.trim().toLowerCase()) ? "safe" : "skip",
 
-export const isLongRandomString = (value: string) =>
-  value.length >= 32 && /^[a-zA-Z0-9\-_./+=]{32,}$/.test(value);
+  // Local connection strings (localhost, 127.0.0.1, etc.)
+  (_k, v) => {
+    const isConnString = /^(postgres|mysql|mongodb|redis|amqp|http|https):\/\//.test(v.trim());
+    const isLocal = /(@|\/\/)(localhost|127\.0\.0\.1|0\.0\.0\.0|::1|host\.docker\.internal)(:|\/|$)/.test(v.trim());
+    return isConnString && isLocal ? "safe" : "skip";
+  },
 
-export const hasEmbeddedCredentials = (value: string) =>
-  /^https?:\/\/[^:]+:[^@]+@/.test(value);
+  // Known secret value prefixes
+  (_k, v) => /^sk-[a-zA-Z0-9\-_]{20,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^sk_(live|test)_[a-zA-Z0-9]{20,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^(pk|rk)_live_[a-zA-Z0-9]{20,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^AKIA[A-Z0-9]{16}$/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^gh[psoiu]_[a-zA-Z0-9]{36,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^glpat-[a-zA-Z0-9\-_]{20,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^xox[bpras]-[a-zA-Z0-9\-]{20,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^SG\.[a-zA-Z0-9\-_]{22,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^bearer\s+[a-zA-Z0-9\-_.]{20,}/i.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^whsec_[a-zA-Z0-9]{20,}/.test(v.trim()) ? "secret" : "skip",
+  (_k, v) => /^eyJ[a-zA-Z0-9\-_]{20,}/.test(v.trim()) ? "secret" : "skip",
 
-export const stripQuotedStrings = (command: string) =>
-  command.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+  // Connection strings with credentials pointing at remote hosts
+  (_k, v) => /^(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/.test(v.trim()) ? "secret" : "skip",
+
+  // Private key blocks
+  (_k, v) => /^-----BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/.test(v.trim()) ? "secret" : "skip",
+
+  // Safe key names — these are config regardless of value
+  (k, _v) => [
+    /^port$/i, /^host$/i, /^hostname$/i, /^url$/i,
+    /^base[_-]?url$/i, /^api[_-]?url$/i, /^app[_-]?url$/i,
+    /^domain$/i, /^debug$/i, /^verbose$/i, /^log[_-]?level$/i,
+    /^node[_-]?env$/i, /^env$/i, /^environment$/i,
+    /^region$/i, /^timezone$/i, /^tz$/i, /^lang$/i, /^locale$/i,
+    /^enabled$/i, /^disabled$/i,
+    /^app[_-]?name$/i, /^project[_-]?name$/i, /^version$/i,
+    /^max/i, /^min/i, /^timeout/i, /^retries$/i,
+    /^workers$/i, /^threads$/i, /^pool[_-]?size$/i,
+  ].some((p) => p.test(k)) ? "safe" : "skip",
+
+  // Secret key names — if we got this far, the value is non-trivial
+  (k, _v) => [
+    /secret/i, /password/i, /passwd/i, /token/i,
+    /api[_-]?key/i, /private[_-]?key/i, /access[_-]?key/i,
+    /auth/i, /credential/i,
+  ].some((p) => p.test(k)) ? "secret" : "skip",
+
+  // Long random-looking strings
+  (_k, v) => v.trim().length >= 32 && /^[a-zA-Z0-9\-_./+=]{32,}$/.test(v.trim()) ? "secret" : "skip",
+
+  // URLs with embedded credentials
+  (_k, v) => /^https?:\/\/[^:]+:[^@]+@/.test(v.trim()) ? "secret" : "skip",
+];
+
+export function classifyValue(key: string, value: string): "safe" | "secret" {
+  for (const rule of valueRules) {
+    const verdict = rule(key, value);
+    if (verdict !== "skip") return verdict;
+  }
+  return "safe";
+}
+
+// --- Inline secret detection (for scanning arbitrary text output) ---
+
+const inlineSecretPatterns: TextRule[] = [
+  (t) => /\bsk-[a-zA-Z0-9\-_]{20,}/.test(t),
+  (t) => /\bsk_(live|test)_[a-zA-Z0-9]{20,}/.test(t),
+  (t) => /\bAKIA[A-Z0-9]{16}\b/.test(t),
+  (t) => /\bgh[psoiu]_[a-zA-Z0-9]{36,}/.test(t),
+  (t) => /\bglpat-[a-zA-Z0-9\-_]{20,}/.test(t),
+  (t) => /\bxox[bpras]-[a-zA-Z0-9\-]{20,}/.test(t),
+  (t) => /\bSG\.[a-zA-Z0-9\-_]{22,}/.test(t),
+  (t) => /\bwhsec_[a-zA-Z0-9]{20,}/.test(t),
+  (t) => /\beyJ[a-zA-Z0-9\-_]{20,}\./.test(t),
+  (t) => /\b(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/.test(t),
+  (t) => /-----BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/.test(t),
+];
+
+export const containsInlineSecret = (text: string) =>
+  inlineSecretPatterns.some((rule) => rule(text));
+
+// --- Blocked paths (always blocked, not config files) ---
+
+const blockedPathPatterns: TextRule[] = [
+  (p) => /\/\.ssh\//.test(p),
+  (p) => /\/\.aws\//.test(p),
+  (p) => /\/\.gnupg\//.test(p),
+  (p) => /\/\.config\/gh\//.test(p),
+  (p) => /id_rsa/.test(p),
+  (p) => /id_ed25519/.test(p),
+  (p) => /\.pem$/.test(p),
+  (p) => /\.key$/.test(p),
+];
+
+export const isBlockedPath = (path: string) =>
+  blockedPathPatterns.some((rule) => rule(path));
+
+// --- Dangerous bash commands ---
+
+const dangerousCommandPatterns: { rule: TextRule; reason: string }[] = [
+  { rule: (c) => /\becho\s+.*\$[{A-Za-z_]/.test(c), reason: "Command could dump all environment variables" },
+  { rule: (c) => /\bprintf\s+.*\$[{A-Za-z_]/.test(c), reason: "Command could dump all environment variables" },
+  { rule: (c) => /(?<!\.)(?<!\w)(env|printenv)(?!\w)/.test(c), reason: "Command could dump all environment variables" },
+  { rule: (c) => /\bset\s*($|\||;|&)/.test(c), reason: "Command could dump all environment variables" },
+  { rule: (c) => /\bexport\s+-p\b/.test(c), reason: "Command could dump all environment variables" },
+  { rule: (c) => /\bdeclare\s+-x\b/.test(c), reason: "Command could dump all environment variables" },
+  { rule: (c) => /\bdocker\s+inspect\b/.test(c), reason: "Command could expose container secrets" },
+  { rule: (c) => /\bcurl\b.*(-H|--header)\s+['"]?(Authorization|X-Api-Key)/i.test(c), reason: "Command contains inline credentials" },
+  { rule: (c) => /\bnode\b.*process\.env/.test(c), reason: "Command could dump all environment variables" },
+  { rule: (c) => /\bpython[3]?\b.*os\.environ/.test(c), reason: "Command could dump all environment variables" },
+];
 
 export function classifyBashCommand(command: string): DangerousCommand {
-  if (isSecretEnvCli(command)) return { dangerous: false, reason: "" };
+  if (/\bsecret-env\b/.test(command)) return { dangerous: false, reason: "" };
 
-  const unquoted = stripQuotedStrings(command);
+  const unquoted = command.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
 
   if (isBlockedPath(unquoted))
     return { dangerous: true, reason: "Command accesses a protected secret file" };
 
-  if (isEnvDumpCommand(command))
-    return { dangerous: true, reason: "Command could dump all environment variables" };
+  for (const { rule, reason } of dangerousCommandPatterns) {
+    if (rule(command)) return { dangerous: true, reason };
+  }
 
   return { dangerous: false, reason: "" };
 }
