@@ -201,8 +201,10 @@ const SECRET_CONTENT_PATTERNS = [
   /-----BEGIN\s+OPENSSH\s+PRIVATE\s+KEY-----/,
 ];
 
-// Detects if output looks like env file content with real values
-const ENV_LINE_PATTERN = /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=\S+/;
+// Detects if output looks like env file content with secret-looking values
+// Matches: KEY=long-random-looking-value, KEY="something with special chars"
+// Does NOT match: port=3000, debug=true, host=localhost (short/simple values)
+const SECRET_ENV_LINE_PATTERN = /^(?:export\s+)?[A-Z_][A-Z0-9_]*=\S{12,}/;
 
 function looksLikeSecretContent(text: string): boolean {
   // Check for known secret patterns
@@ -210,16 +212,17 @@ function looksLikeSecretContent(text: string): boolean {
     if (pattern.test(text)) return true;
   }
 
-  // Check if output looks like env file content (multiple KEY=VALUE lines with real values)
+  // Check if output looks like env file content with secret-ish values
+  // Require UPPER_CASE keys with long values (12+ chars) to avoid false positives
   const lines = text.split("\n").filter((l) => l.trim().length > 0);
-  let envLineCount = 0;
+  let secretEnvLineCount = 0;
   for (const line of lines) {
-    if (ENV_LINE_PATTERN.test(line.trim())) {
-      envLineCount++;
+    if (SECRET_ENV_LINE_PATTERN.test(line.trim())) {
+      secretEnvLineCount++;
     }
   }
-  // If more than half the non-empty lines look like env vars, it's probably env content
-  if (envLineCount >= 2 && envLineCount / lines.length > 0.4) {
+  // Multiple lines that look like env vars with real secrets
+  if (secretEnvLineCount >= 3) {
     return true;
   }
 
