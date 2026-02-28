@@ -174,6 +174,58 @@ function redactSecrets(text: string, secrets: Map<string, string>): string {
   return result;
 }
 
+// --- Secret Content Detection (safety net for output) ---
+
+// Patterns that indicate content contains secrets
+const SECRET_CONTENT_PATTERNS = [
+  // API key prefixes (common providers)
+  /\bsk-[a-zA-Z0-9]{20,}/,                    // OpenAI, Stripe secret keys
+  /\bsk_live_[a-zA-Z0-9]{20,}/,               // Stripe live keys
+  /\bsk_test_[a-zA-Z0-9]{20,}/,               // Stripe test keys
+  /\bpk_live_[a-zA-Z0-9]{20,}/,               // Stripe publishable
+  /\brk_live_[a-zA-Z0-9]{20,}/,               // Stripe restricted
+  /\bAKIA[A-Z0-9]{16}\b/,                     // AWS access key IDs
+  /\bghp_[a-zA-Z0-9]{36,}/,                   // GitHub personal tokens
+  /\bghs_[a-zA-Z0-9]{36,}/,                   // GitHub server tokens
+  /\bgho_[a-zA-Z0-9]{36,}/,                   // GitHub OAuth tokens
+  /\bghu_[a-zA-Z0-9]{36,}/,                   // GitHub user tokens
+  /\bglpat-[a-zA-Z0-9\-_]{20,}/,             // GitLab personal tokens
+  /\bxox[bpras]-[a-zA-Z0-9\-]{20,}/,         // Slack tokens
+  /\bSG\.[a-zA-Z0-9\-_]{22,}/,               // SendGrid
+  /\bbearer\s+[a-zA-Z0-9\-_.]{20,}/i,        // Bearer tokens
+  // Connection strings with credentials
+  /\b(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/,
+  // Private keys
+  /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----/,
+  /-----BEGIN\s+EC\s+PRIVATE\s+KEY-----/,
+  /-----BEGIN\s+OPENSSH\s+PRIVATE\s+KEY-----/,
+];
+
+// Detects if output looks like env file content with real values
+const ENV_LINE_PATTERN = /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=\S+/;
+
+function looksLikeSecretContent(text: string): boolean {
+  // Check for known secret patterns
+  for (const pattern of SECRET_CONTENT_PATTERNS) {
+    if (pattern.test(text)) return true;
+  }
+
+  // Check if output looks like env file content (multiple KEY=VALUE lines with real values)
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  let envLineCount = 0;
+  for (const line of lines) {
+    if (ENV_LINE_PATTERN.test(line.trim())) {
+      envLineCount++;
+    }
+  }
+  // If more than half the non-empty lines look like env vars, it's probably env content
+  if (envLineCount >= 2 && envLineCount / lines.length > 0.4) {
+    return true;
+  }
+
+  return false;
+}
+
 // --- Dangerous Bash Command Detection ---
 
 const SECRET_FILE_BASH_PATTERNS = [
@@ -331,19 +383,29 @@ If you need the user to set a value, tell them to open the file in their editor.
     return undefined;
   });
 
-  // --- Redact secrets from ALL tool results (safety net) ---
+  // --- Safety net: scan ALL tool results for secrets ---
   pi.on("tool_result", async (event, _ctx) => {
-    if (secrets.size === 0) return;
-
     let modified = false;
     const newContent = event.content.map((c) => {
-      if (c.type === "text") {
-        const redacted = redactSecrets(c.text, secrets);
-        if (redacted !== c.text) {
+      if (c.type !== "text") return c;
+      let text = c.text;
+
+      // 1. Redact known secret values from .env files
+      if (secrets.size > 0) {
+        const redacted = redactSecrets(text, secrets);
+        if (redacted !== text) {
           modified = true;
-          return { ...c, text: redacted };
+          text = redacted;
         }
       }
+
+      // 2. Scan for content that looks like it contains secrets
+      if (looksLikeSecretContent(text)) {
+        modified = true;
+        text = "🔒 Blocked: Output contained what appears to be secret values (API keys, tokens, credentials, or env file content). Use `secret-env` CLI for safe access.";
+      }
+
+      if (modified) return { ...c, text };
       return c;
     });
 
