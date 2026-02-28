@@ -69,7 +69,7 @@ const SAFE_KEY_NAME_PATTERNS = [
 const ENV_DUMP_PATTERNS = [
   /\becho\s+.*\$[{A-Za-z_]/,
   /\bprintf\s+.*\$[{A-Za-z_]/,
-  /\b(env|printenv)\b/,
+  /(?<!\.)(?<!\w)(env|printenv)(?!\w)/,
   /\bset\s*($|\||;|&)/,
   /\bexport\s+-p\b/,
   /\bdeclare\s+-x\b/,
