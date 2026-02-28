@@ -16,8 +16,6 @@ const cond = (rules: ValueRule[]) =>
 // --- Value predicates ---
 
 const matchesValue = (pattern: RegExp) => (_k: string, v: string) => pattern.test(v.trim());
-const matchesKey = (patterns: RegExp[]) => (k: string, _v: string) =>
-  patterns.some((p) => p.test(k));
 
 const isEmpty: ValueRule = (_k, v) => v.trim().length === 0 ? "safe" : "skip";
 
@@ -50,10 +48,10 @@ const isLocalConnectionString: ValueRule = (_k, v) => {
 const matchesGitleaks: ValueRule = (_k, v) =>
   matchesGitleaksValue(v.trim()) !== null ? "secret" : "skip";
 
-const hasRemoteConnString: ValueRule = (k, v) =>
+const hasRemoteConnString: ValueRule = (_k, v) =>
   /^(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/.test(v.trim()) ? "secret" : "skip";
 
-const hasPrivateKeyHeader: ValueRule = (k, v) =>
+const hasPrivateKeyHeader: ValueRule = (_k, v) =>
   /^-----BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/.test(v.trim()) ? "secret" : "skip";
 
 const hasSafeKeyName: ValueRule = (k, _v) =>
@@ -85,22 +83,18 @@ const hasEmbeddedCreds: ValueRule = (_k, v) =>
 // --- Classification pipeline ---
 
 export const classifyValue = cond([
-  // Safe values first (cheap checks)
   isEmpty,
   isTrivialValue,
   isCommonDefault,
   isLocalConnectionString,
 
-  // Known secret formats (gitleaks: 200+ provider patterns)
   matchesGitleaks,
   hasRemoteConnString,
   hasPrivateKeyHeader,
 
-  // Key name heuristics
   hasSafeKeyName,
   hasSecretKeyName,
 
-  // Catch-all heuristics
   isLongRandom,
   hasEmbeddedCreds,
 ]);
@@ -112,9 +106,9 @@ export const containsInlineSecret = (text: string): boolean =>
   /\b(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/.test(text) ||
   /-----BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/.test(text);
 
-// --- Blocked paths ---
+// --- Hard-blocked paths (credential stores, not redactable) ---
 
-export const isBlockedPath = (path: string) => [
+export const isHardBlockedPath = (path: string) => [
   /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\/\.config\/gh\//,
   /id_rsa/, /id_ed25519/, /\.pem$/, /\.key$/,
 ].some((p) => p.test(path));
@@ -137,10 +131,8 @@ const dangerousCommandRules: [RegExp, string][] = [
 const stripQuotes = (s: string) => s.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
 
 export function classifyBashCommand(command: string): DangerousCommand {
-  if (/\bsecret-env\b/.test(command)) return { dangerous: false, reason: "" };
-
-  if (isBlockedPath(stripQuotes(command)))
-    return { dangerous: true, reason: "Command accesses a protected secret file" };
+  if (isHardBlockedPath(stripQuotes(command)))
+    return { dangerous: true, reason: "Command accesses a protected credential file" };
 
   for (const [pattern, reason] of dangerousCommandRules) {
     if (pattern.test(command)) return { dangerous: true, reason };

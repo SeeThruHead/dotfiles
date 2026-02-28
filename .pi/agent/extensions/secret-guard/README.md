@@ -1,70 +1,54 @@
 # secret-guard
 
-Pi extension that prevents secret values from leaking into the LLM context while keeping non-secret config visible for debugging.
+Pi coding agent extension that prevents secret values from leaking into the LLM context.
 
 ## How it works
 
-**Smart redaction on output** — Pi can read `.env` files and see config like `PORT=3000`, `HOST=localhost`, `NODE_ENV=development`. But values that look like secrets (API keys, tokens, passwords, connection strings with credentials) are replaced with `<REDACTED>` before the LLM sees them.
+**Smart redaction, not blocking.** You can freely `read`, `cat`, `grep` any `.env` file. Secret values are automatically redacted in tool output — config values (ports, hostnames, booleans, local connection strings) stay visible for debugging.
 
-**Hard blocks** — Some things are blocked entirely: `echo $VAR`, `env`, `printenv`, `export -p`, and access to `~/.ssh/`, `~/.aws/`, `~/.gnupg/`, private key files.
+Secret detection is powered by:
+- **221 gitleaks rules** (`gitleaks-rules.json`) — provider-specific token prefixes (AWS, Stripe, GitHub, Anthropic, Slack, etc.)
+- **Key name heuristics** — `SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`, etc.
+- **Value shape analysis** — long random strings, embedded credentials, remote connection strings
+- **Safe value recognition** — booleans, numbers, env names, localhost URLs, common dev defaults
 
-**Content scanning** — Even if a secret ends up in an unexpected file, the output scanner catches known secret patterns (OpenAI keys, AWS keys, GitHub tokens, Stripe keys, JWTs, connection strings, private key headers, etc.) and blocks them.
+## What gets blocked
 
-## What gets redacted
-
-| Detected as secret | Example |
+| Category | Behavior |
 |---|---|
-| API key prefixes | `sk-`, `sk_live_`, `AKIA`, `ghp_`, `glpat-`, `xoxb-`, `SG.`, `whsec_` |
-| JWT tokens | `eyJ...` |
-| Connection strings with credentials | `postgres://user:pass@host/db` |
-| URLs with embedded credentials | `https://user:pass@host` |
-| Secret-named keys with non-trivial values | `*SECRET*=`, `*PASSWORD*=`, `*TOKEN*=`, `*AUTH*=`, `*CREDENTIAL*=` |
-| Long random strings (32+ chars) | Likely tokens or keys |
-| Private keys | `-----BEGIN RSA PRIVATE KEY-----` |
-
-## What stays visible
-
-Ports, hostnames, booleans, feature flags, environment names, log levels, app names, short simple values, numbers — anything that's clearly config and not a secret.
-
-## CLI
-
-The `secret-env` CLI (installed to `~/.local/bin/`) provides a fully-redacted view when you want to see structure without any values:
-
-```
-secret-env read <file>                   Show .env with values as <SET>/<EMPTY>
-secret-env check <file> <KEY>            Check if a variable exists and has a value
-secret-env list [dir]                    List all .env files and their variable names
-secret-env copy <source> <target> <KEY>  Copy a variable between .env files on disk
-secret-env keys <file>                   List just the variable names
-```
+| `.env` files | ✅ Readable — secrets auto-redacted, config visible |
+| `~/.ssh/`, `~/.aws/`, `*.pem`, `*.key` | 🔒 Hard-blocked (not redactable) |
+| `env`, `printenv`, `echo $VAR` | 🔒 Blocked (dumps process env) |
+| Arbitrary tool output | ✅ Scanned for inline secret patterns |
 
 ## Commands
 
-- `/secrets` — show status and current whitelist
-- `/secrets-whitelist` — add a file or command to the whitelist (project or global)
-- `/secrets-clear` — clear whitelist
+| Command | Description |
+|---|---|
+| `/secrets` | Show status and whitelist |
+| `/secrets-copy` | Copy a variable between .env files (value never shown) |
+| `/secrets-whitelist` | Allow a blocked file or command |
+| `/secrets-clear` | Clear the whitelist |
 
-## Whitelist
+## Performance
 
-When something gets blocked that shouldn't be, the user can run `/secrets-whitelist` to allow it. Whitelists are stored as JSON:
+Keyword pre-filtering avoids running all 221 gitleaks regexes on every tool output. Only rules whose keywords appear in the text are tested. Non-env output (code, logs, file listings) skips the per-line parser entirely.
 
-- **Project:** `.pi/secret-guard.json`
-- **Global:** `~/.pi/agent/secret-guard.json`
+## Updating gitleaks rules
 
-## Install
+Regenerate `gitleaks-rules.json` from the latest gitleaks config:
 
-Already included in dotfiles. On a new machine, `yadm pull` brings it down at `~/.pi/agent/extensions/secret-guard/`. The `secret-env` CLI lands at `~/.local/bin/secret-env` (make sure `~/.local/bin` is on your PATH).
+```bash
+curl -s https://raw.githubusercontent.com/zricethezav/gitleaks/master/config/gitleaks.toml > /tmp/gitleaks.toml
+# run extraction script (see repo history)
+```
 
 ## Files
 
-```
-secret-guard/
-├── index.ts       Extension entry — event handlers, commands
-├── patterns.ts    Regex patterns and pure classification functions
-├── redaction.ts   Pure text redaction (string in, string out)
-├── whitelist.ts   Whitelist IO (load/save/query)
-├── types.ts       Interfaces
-├── bin/
-│   └── secret-env Bash CLI for fully-redacted .env access
-└── README.md
-```
+- `index.ts` — extension entry, event handlers, commands
+- `patterns.ts` — classification pipeline (cond-style, first match wins)
+- `gitleaks.ts` — loads and indexes gitleaks-rules.json
+- `gitleaks-rules.json` — 221 rules extracted from gitleaks
+- `redaction.ts` — text redaction with fast-path
+- `whitelist.ts` — project/global whitelist persistence
+- `types.ts` — shared types

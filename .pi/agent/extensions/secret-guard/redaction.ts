@@ -2,13 +2,15 @@ import type { RedactResult, EnvLine } from "./types.js";
 import { classifyValue, containsInlineSecret } from "./patterns.js";
 
 const REDACTED = "<REDACTED>";
-const BLOCKED_OUTPUT = "🔒 Blocked: Output contained what appears to be secret values (API keys, tokens, credentials). Use `secret-env` CLI for safe access.";
+const BLOCKED_OUTPUT = "🔒 Blocked: Output contained what appears to be secret values (API keys, tokens, credentials).";
+
+const ENV_LINE_RE = /^(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)/;
 
 function parseEnvLine(line: string): EnvLine | null {
   const trimmed = line.trim();
   if (trimmed === "" || trimmed.startsWith("#")) return null;
 
-  const match = trimmed.match(/^(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)/);
+  const match = trimmed.match(ENV_LINE_RE);
   if (!match) return null;
 
   const raw = match[3].trim();
@@ -34,18 +36,32 @@ function redactLine(line: string): string {
     : line;
 }
 
+// Fast path: does this text look like it could contain secrets?
+// Checks for KEY=VALUE patterns or known secret indicators before doing real work.
+const looksLikeEnvContent = (text: string): boolean =>
+  ENV_LINE_RE.test(text);
+
 export function redactText(text: string): RedactResult {
-  if (containsInlineSecret(text)) {
-    const hasStructuredLines = text.split("\n").some((l) => parseEnvLine(l) !== null);
-    if (!hasStructuredLines) return { text: BLOCKED_OUTPUT, redacted: true };
+  // Fast path: if no KEY=VALUE lines, just check for inline secrets
+  if (!looksLikeEnvContent(text)) {
+    if (containsInlineSecret(text)) {
+      return { text: BLOCKED_OUTPUT, redacted: true };
+    }
+    return { text, redacted: false };
   }
 
+  // Has structured lines — redact per-line
   let anyRedacted = false;
   const lines = text.split("\n").map((line) => {
     const result = redactLine(line);
     if (result !== line) anyRedacted = true;
     return result;
   });
+
+  // Also check if non-structured lines contain inline secrets
+  if (!anyRedacted && containsInlineSecret(text)) {
+    return { text: BLOCKED_OUTPUT, redacted: true };
+  }
 
   return {
     text: anyRedacted ? lines.join("\n") : text,
