@@ -14,9 +14,6 @@ if [[ -z "$HOMEBREW_PREFIX" ]]; then
   fi
 fi
 
-# z - directory jumping
-[[ -f "$HOMEBREW_PREFIX/etc/profile.d/z.sh" ]] && . "$HOMEBREW_PREFIX/etc/profile.d/z.sh"
-
 # Aliases
 alias dc="docker-compose"
 alias gs="git status"
