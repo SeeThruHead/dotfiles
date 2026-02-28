@@ -98,8 +98,28 @@ export const isSafeValue = (value: string): boolean => {
     /^\d+$/.test(v) ||
     /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$/i.test(v) ||
     (v.length < 8 && /^[a-zA-Z0-9._-]+$/.test(v)) ||
-    /^(development|production|staging|test|debug|info|warn|error)$/i.test(v)
+    /^(development|production|staging|test|debug|info|warn|error)$/i.test(v) ||
+    isLocalConnectionString(v) ||
+    isCommonLocalDefault(v)
   );
+};
+
+export const isLocalConnectionString = (value: string): boolean => {
+  const v = value.trim();
+  const localHosts = /(@|\/\/)(localhost|127\.0\.0\.1|0\.0\.0\.0|::1|host\.docker\.internal)(:|\/|$)/;
+  return /^(postgres|mysql|mongodb|redis|amqp|http|https):\/\//.test(v) && localHosts.test(v);
+};
+
+export const isCommonLocalDefault = (value: string): boolean => {
+  const v = value.trim().toLowerCase();
+  const defaults = [
+    "redis", "password", "passwd", "pass", "secret",
+    "root", "admin", "test", "guest", "default",
+    "changeme", "example", "placeholder",
+    "your_secret_here", "your_password_here",
+    "xxx", "xxxxxxxx", "todo", "fixme",
+  ];
+  return defaults.includes(v);
 };
 
 export const isLongRandomString = (value: string) =>
