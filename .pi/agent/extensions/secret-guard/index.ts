@@ -179,7 +179,7 @@ function redactSecrets(text: string, secrets: Map<string, string>): string {
 // Patterns that indicate content contains secrets
 const SECRET_CONTENT_PATTERNS = [
   // API key prefixes (common providers)
-  /\bsk-[a-zA-Z0-9]{20,}/,                    // OpenAI, Stripe secret keys
+  /\bsk-[a-zA-Z0-9\-_]{20,}/,                  // OpenAI, Stripe secret keys
   /\bsk_live_[a-zA-Z0-9]{20,}/,               // Stripe live keys
   /\bsk_test_[a-zA-Z0-9]{20,}/,               // Stripe test keys
   /\bpk_live_[a-zA-Z0-9]{20,}/,               // Stripe publishable
