@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>pi-remote</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: {
+        mono: ["'SF Mono'", "'Fira Code'", "'JetBrains Mono'", "'Cascadia Code'", 'Menlo', 'Monaco', 'monospace'],
+      },
+      colors: {
+        surface: '#16213e',
+        deep: '#0f1629',
+        border: '#2d2d4a',
+      },
+    },
+  },
+};
+</script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<style>
+  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @keyframes blink { 50% { opacity: 0; } }
+  .animate-pulse-dot { animation: pulse-dot 1.5s infinite; }
+  .animate-blink { animation: blink 1s step-end infinite; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2d2d4a; border-radius: 3px; }
+  pre code.hljs { font-family: inherit; }
+</style>
+</head>
+<body class="dark bg-[#1a1a2e] text-gray-200 font-mono text-sm h-screen overflow-hidden">
+
+<div id="app" class="h-screen flex flex-col"></div>
+
+<script type="module">
+import { render } from "./vendor.js";
+import { html } from "./html.js";
+import App from "./app.js";
+
+render(html`<${App} />`, document.getElementById("app"));
+</script>
+
+</body>
+</html>
