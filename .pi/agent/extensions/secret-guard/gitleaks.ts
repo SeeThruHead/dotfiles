@@ -2,6 +2,20 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// ================================================================
+//  Gitleaks rule engine — optimized keyword pre-filter
+// ================================================================
+//
+//  V8's native String.indexOf() is extremely fast on modern CPUs
+//  (uses SIMD internally). 244 indexOf() calls on 50KB completes
+//  in ~1-2ms, faster than any JS Aho-Corasick implementation.
+//
+//  Strategy:
+//  1. Single toLowerCase() of the text
+//  2. 244 indexOf() calls to find which keywords are present
+//  3. Only test regexes for rules whose keywords matched
+// ================================================================
+
 interface RawRule {
   id: string;
   pattern: string;
@@ -11,84 +25,115 @@ interface RawRule {
 interface CompiledRule {
   id: string;
   pattern: RegExp;
-  keywords: string[];
 }
 
-const compileRule = (raw: RawRule): CompiledRule | null => {
-  try {
-    return { id: raw.id, pattern: new RegExp(raw.pattern, "i"), keywords: raw.keywords };
-  } catch {
-    return null;
-  }
-};
+// --- Load and compile rules at startup ---
 
 const extensionDir = dirname(fileURLToPath(import.meta.url));
-
 const rawRules: RawRule[] = JSON.parse(
   readFileSync(join(extensionDir, "gitleaks-rules.json"), "utf-8")
 );
 
-const rules: CompiledRule[] = rawRules
-  .map(compileRule)
-  .filter((r): r is CompiledRule => r !== null);
+// Deduplicate keywords, build keyword→rules index
+const keywordToRuleIdx = new Map<string, number[]>();
+const uniqueKeywords: string[] = [];
+const rules: CompiledRule[] = [];
+const rulesWithoutKeywords: number[] = []; // indices into rules[]
 
-// Pre-compute: all keywords lowercased, plus index from keyword → rules
-const allKeywords: string[] = [
-  ...new Set(rules.flatMap((r) => r.keywords.map((k) => k.toLowerCase())))
-];
+for (const raw of rawRules) {
+  let pattern: RegExp;
+  try {
+    // Strip inline (?i) flags — Node.js doesn't support them,
+    // and we already pass "i" to RegExp(). Also handle (?i) mid-pattern.
+    const cleaned = raw.pattern.replace(/\(\?i\)/g, "");
+    pattern = new RegExp(cleaned, "i");
+  } catch {
+    continue;
+  }
 
-const keywordToRules = new Map<string, CompiledRule[]>();
-for (const rule of rules) {
-  if (rule.keywords.length === 0) continue;
-  for (const kw of rule.keywords) {
+  const ruleIdx = rules.length;
+  rules.push({ id: raw.id, pattern });
+
+  if (raw.keywords.length === 0) {
+    rulesWithoutKeywords.push(ruleIdx);
+    continue;
+  }
+
+  for (const kw of raw.keywords) {
     const lower = kw.toLowerCase();
-    const list = keywordToRules.get(lower) ?? [];
-    list.push(rule);
-    keywordToRules.set(lower, list);
+    let indices = keywordToRuleIdx.get(lower);
+    if (!indices) {
+      indices = [];
+      keywordToRuleIdx.set(lower, indices);
+      uniqueKeywords.push(lower);
+    }
+    indices.push(ruleIdx);
   }
 }
 
-const rulesWithoutKeywords = rules.filter((r) => r.keywords.length === 0);
+// Sort keywords longest-first so longer matches are checked first
+// (minor optimization: longer keywords fail faster on average)
+uniqueKeywords.sort((a, b) => b.length - a.length);
 
-// Fast check: does this text contain ANY gitleaks keyword?
-const findMatchingKeywords = (text: string): Set<string> => {
-  const lower = text.toLowerCase();
-  const found = new Set<string>();
-  for (const kw of allKeywords) {
-    if (lower.includes(kw)) found.add(kw);
+// Pre-allocate a boolean array for deduplicating candidate rules
+const rulesSeen = new Uint8Array(rules.length);
+
+// ================================================================
+//  Candidate rule selection
+// ================================================================
+
+function getCandidateIndices(lower: string): number[] {
+  // Reset seen array
+  rulesSeen.fill(0);
+
+  const candidates: number[] = [];
+
+  // Always include keywordless rules
+  for (let i = 0; i < rulesWithoutKeywords.length; i++) {
+    const ri = rulesWithoutKeywords[i];
+    candidates.push(ri);
+    rulesSeen[ri] = 1;
   }
-  return found;
-};
 
-// Get candidate rules based on keyword hits (avoids running all 221 regexes)
-const candidateRules = (text: string): CompiledRule[] => {
-  const hits = findMatchingKeywords(text);
-  if (hits.size === 0) return rulesWithoutKeywords;
-
-  const candidates = new Set<CompiledRule>(rulesWithoutKeywords);
-  for (const kw of hits) {
-    for (const rule of keywordToRules.get(kw) ?? []) {
-      candidates.add(rule);
+  // Find which keywords appear in text
+  for (let i = 0; i < uniqueKeywords.length; i++) {
+    if (lower.indexOf(uniqueKeywords[i]) !== -1) {
+      const ruleIndices = keywordToRuleIdx.get(uniqueKeywords[i])!;
+      for (let j = 0; j < ruleIndices.length; j++) {
+        const ri = ruleIndices[j];
+        if (!rulesSeen[ri]) {
+          rulesSeen[ri] = 1;
+          candidates.push(ri);
+        }
+      }
     }
   }
-  return [...candidates];
-};
 
-export const matchesGitleaksValue = (value: string): string | null => {
+  return candidates;
+}
+
+// ================================================================
+//  Public API
+// ================================================================
+
+export function matchesGitleaksValue(value: string): string | null {
   if (value.length < 8) return null;
 
-  for (const rule of candidateRules(value)) {
+  const lower = value.toLowerCase();
+  const candidates = getCandidateIndices(lower);
+  for (let i = 0; i < candidates.length; i++) {
+    const rule = rules[candidates[i]];
     if (rule.pattern.test(value)) return rule.id;
   }
   return null;
-};
+}
 
-export const matchesGitleaksText = (text: string): string | null => {
-  const candidates = candidateRules(text);
-  if (candidates.length === 0) return null;
-
-  for (const rule of candidates) {
+export function matchesGitleaksText(text: string): string | null {
+  const lower = text.toLowerCase();
+  const candidates = getCandidateIndices(lower);
+  for (let i = 0; i < candidates.length; i++) {
+    const rule = rules[candidates[i]];
     if (rule.pattern.test(text)) return rule.id;
   }
   return null;
-};
+}

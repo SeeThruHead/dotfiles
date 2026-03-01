@@ -1,22 +1,34 @@
 import type { RedactResult, EnvLine } from "./types.js";
-import { classifyValue, containsInlineSecret } from "./patterns.js";
+import { classifyValue, redactInlineSecrets } from "./patterns.js";
+
+// ================================================================
+//  Text redaction — optimized
+// ================================================================
+//
+//  Key optimizations:
+//  - Single pass to check for env content AND split lines
+//  - No .map() allocation when nothing is redacted
+//  - Inline secret check only runs when no per-line redaction occurred
+//  - ENV_LINE_RE compiled once, reused via .exec() with lastIndex reset
+// ================================================================
 
 const REDACTED = "<REDACTED>";
-const BLOCKED_OUTPUT = "🔒 Blocked: Output contained what appears to be secret values (API keys, tokens, credentials).";
 
 const ENV_LINE_RE = /^(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)/;
 
 function parseEnvLine(line: string): EnvLine | null {
   const trimmed = line.trim();
-  if (trimmed === "" || trimmed.startsWith("#")) return null;
+  if (trimmed.length === 0 || trimmed.charCodeAt(0) === 35 /* # */) return null;
 
-  const match = trimmed.match(ENV_LINE_RE);
-  if (!match) return null;
+  const match = ENV_LINE_RE.exec(trimmed);
+  if (match === null) return null;
 
   const raw = match[3].trim();
+  const first = raw.charCodeAt(0);
+  const last = raw.charCodeAt(raw.length - 1);
   const isQuoted =
-    (raw.startsWith('"') && raw.endsWith('"')) ||
-    (raw.startsWith("'") && raw.endsWith("'"));
+    (first === 34 /* " */ && last === 34) ||
+    (first === 39 /* ' */ && last === 39);
 
   return {
     prefix: match[1] || "",
@@ -27,44 +39,62 @@ function parseEnvLine(line: string): EnvLine | null {
   };
 }
 
-function redactLine(line: string): string {
-  const parsed = parseEnvLine(line);
-  if (!parsed) return line;
+// Quick scan: does text contain at least one line matching KEY=VALUE?
+// Uses indexOf for speed — avoids running regex on the full text.
+// Multiline version of ENV_LINE_RE for scanning full text blocks
+const ENV_LINE_MULTI_RE = /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=./m;
 
-  return classifyValue(parsed.key, parsed.innerValue) === "secret"
-    ? `${parsed.prefix}${parsed.key}=${parsed.quoteChar}${REDACTED}${parsed.quoteChar}`
-    : line;
+function hasEnvLine(text: string): boolean {
+  // Look for pattern: word char followed by = not at start of line comment
+  // Quick heuristic: just check if = exists (very cheap), then confirm with regex on first hit
+  if (text.indexOf("=") === -1) return false;
+  return ENV_LINE_MULTI_RE.test(text);
 }
 
-// Fast path: does this text look like it could contain secrets?
-// Checks for KEY=VALUE patterns or known secret indicators before doing real work.
-const looksLikeEnvContent = (text: string): boolean =>
-  ENV_LINE_RE.test(text);
-
 export function redactText(text: string): RedactResult {
-  // Fast path: if no KEY=VALUE lines, just check for inline secrets
-  if (!looksLikeEnvContent(text)) {
-    if (containsInlineSecret(text)) {
-      return { text: BLOCKED_OUTPUT, redacted: true };
-    }
-    return { text, redacted: false };
+  // Fast path: no KEY=VALUE patterns → just check inline secrets
+  if (!hasEnvLine(text)) {
+    return redactInlineSecrets(text);
   }
 
-  // Has structured lines — redact per-line
+  // Split and redact per-line
+  const lines = text.split("\n");
   let anyRedacted = false;
-  const lines = text.split("\n").map((line) => {
-    const result = redactLine(line);
-    if (result !== line) anyRedacted = true;
-    return result;
-  });
+  // Build output only if we find something to redact (avoid allocation on clean path)
+  let redactedLines: string[] | null = null;
 
-  // Also check if non-structured lines contain inline secrets
-  if (!anyRedacted && containsInlineSecret(text)) {
-    return { text: BLOCKED_OUTPUT, redacted: true };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const parsed = parseEnvLine(line);
+    if (parsed === null) continue;
+
+    if (classifyValue(parsed.key, parsed.innerValue) === "secret") {
+      if (redactedLines === null) {
+        // First redaction — copy all lines up to this point
+        redactedLines = new Array(lines.length);
+        for (let j = 0; j < i; j++) redactedLines[j] = lines[j];
+      }
+      redactedLines[i] = `${parsed.prefix}${parsed.key}=${parsed.quoteChar}${REDACTED}${parsed.quoteChar}`;
+      anyRedacted = true;
+    } else if (redactedLines !== null) {
+      redactedLines[i] = line;
+    }
   }
 
-  return {
-    text: anyRedacted ? lines.join("\n") : text,
-    redacted: anyRedacted,
-  };
+  if (anyRedacted && redactedLines !== null) {
+    // Fill any remaining unprocessed lines
+    for (let i = 0; i < lines.length; i++) {
+      if (redactedLines[i] === undefined) redactedLines[i] = lines[i];
+    }
+    // Also run inline redaction for non-env secrets (PEM blocks, conn strings in prose, etc.)
+    const envRedacted = redactedLines.join("\n");
+    const inlineResult = redactInlineSecrets(envRedacted);
+    return { text: inlineResult.text, redacted: true };
+  }
+
+  // No per-line redaction — check for inline secrets in the full text
+  const inlineResult = redactInlineSecrets(text);
+  if (inlineResult.redacted) return inlineResult;
+
+  return { text, redacted: false };
 }

@@ -1,142 +1,179 @@
-import type { DangerousCommand } from "./types.js";
 import { matchesGitleaksValue, matchesGitleaksText } from "./gitleaks.js";
 
+// ================================================================
+//  Value classification pipeline — optimized
+// ================================================================
+//
+//  Key optimizations vs original:
+//  - Value is trimmed ONCE and passed through, not re-trimmed per rule
+//  - Key name checks use a single pre-compiled regex instead of .some()
+//  - Trivial values and common defaults use Set lookup instead of regex
+//  - Connection string checks combined into fewer regex tests
+// ================================================================
+
 type Verdict = "safe" | "secret" | "skip";
-type ValueRule = (key: string, value: string) => Verdict;
 
-const cond = (rules: ValueRule[]) =>
-  (key: string, value: string): "safe" | "secret" => {
-    for (const rule of rules) {
-      const v = rule(key, value);
-      if (v !== "skip") return v;
-    }
-    return "safe";
-  };
+// --- Pre-compiled patterns (built once at module load) ---
 
-// --- Value predicates ---
+const TRIVIAL_EXACT = new Set([
+  "true", "false", "yes", "no", "on", "off", "0", "1",
+  "localhost", "127.0.0.1", "0.0.0.0", "::1",
+  "development", "production", "staging", "test",
+  "debug", "info", "warn", "error",
+]);
 
-const matchesValue = (pattern: RegExp) => (_k: string, v: string) => pattern.test(v.trim());
-
-const isEmpty: ValueRule = (_k, v) => v.trim().length === 0 ? "safe" : "skip";
-
-const isTrivialValue: ValueRule = (_k, v) => {
-  const t = v.trim();
-  return (
-    /^(true|false|yes|no|on|off|0|1)$/i.test(t) ||
-    /^\d+$/.test(t) ||
-    /^(localhost|127\.0\.0\.1|0\.0\.0\.0|::1)$/i.test(t) ||
-    (t.length < 8 && /^[a-zA-Z0-9._-]+$/.test(t)) ||
-    /^(development|production|staging|test|debug|info|warn|error)$/i.test(t)
-  ) ? "safe" : "skip";
-};
-
-const isCommonDefault: ValueRule = (_k, v) => [
+const COMMON_DEFAULTS = new Set([
   "redis", "password", "passwd", "pass", "secret",
   "root", "admin", "test", "guest", "default",
   "changeme", "example", "placeholder",
   "your_secret_here", "your_password_here",
   "xxx", "xxxxxxxx", "todo", "fixme",
-].includes(v.trim().toLowerCase()) ? "safe" : "skip";
-
-const isLocalConnectionString: ValueRule = (_k, v) => {
-  const t = v.trim();
-  const isConn = /^(postgres|mysql|mongodb|redis|amqp|http|https):\/\//.test(t);
-  const isLocal = /(@|\/\/)(localhost|127\.0\.0\.1|0\.0\.0\.0|::1|host\.docker\.internal)(:|\/|$)/.test(t);
-  return isConn && isLocal ? "safe" : "skip";
-};
-
-const matchesGitleaks: ValueRule = (_k, v) =>
-  matchesGitleaksValue(v.trim()) !== null ? "secret" : "skip";
-
-const hasRemoteConnString: ValueRule = (_k, v) =>
-  /^(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/.test(v.trim()) ? "secret" : "skip";
-
-const hasPrivateKeyHeader: ValueRule = (_k, v) =>
-  /^-----BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/.test(v.trim()) ? "secret" : "skip";
-
-const hasSafeKeyName: ValueRule = (k, _v) =>
-  [
-    /^port$/i, /^host$/i, /^hostname$/i, /^url$/i,
-    /^base[_-]?url$/i, /^api[_-]?url$/i, /^app[_-]?url$/i,
-    /^domain$/i, /^debug$/i, /^verbose$/i, /^log[_-]?level$/i,
-    /^node[_-]?env$/i, /^env$/i, /^environment$/i,
-    /^region$/i, /^timezone$/i, /^tz$/i, /^lang$/i, /^locale$/i,
-    /^enabled$/i, /^disabled$/i,
-    /^app[_-]?name$/i, /^project[_-]?name$/i, /^version$/i,
-    /^max/i, /^min/i, /^timeout/i, /^retries$/i,
-    /^workers$/i, /^threads$/i, /^pool[_-]?size$/i,
-  ].some((p) => p.test(k)) ? "safe" : "skip";
-
-const hasSecretKeyName: ValueRule = (k, _v) =>
-  [
-    /secret/i, /password/i, /passwd/i, /token/i,
-    /api[_-]?key/i, /private[_-]?key/i, /access[_-]?key/i,
-    /auth/i, /credential/i,
-  ].some((p) => p.test(k)) ? "secret" : "skip";
-
-const isLongRandom: ValueRule = (_k, v) =>
-  v.trim().length >= 32 && /^[a-zA-Z0-9\-_./+=]{32,}$/.test(v.trim()) ? "secret" : "skip";
-
-const hasEmbeddedCreds: ValueRule = (_k, v) =>
-  /^https?:\/\/[^:]+:[^@]+@/.test(v.trim()) ? "secret" : "skip";
-
-// --- Classification pipeline ---
-
-export const classifyValue = cond([
-  isEmpty,
-  isTrivialValue,
-  isCommonDefault,
-  isLocalConnectionString,
-
-  matchesGitleaks,
-  hasRemoteConnString,
-  hasPrivateKeyHeader,
-
-  hasSafeKeyName,
-  hasSecretKeyName,
-
-  isLongRandom,
-  hasEmbeddedCreds,
 ]);
 
-// --- Inline secret scanning ---
+// Single regex for safe key names (combined with |)
+const SAFE_KEY_RE = /^(?:port|host|hostname|url|base[_-]?url|api[_-]?url|app[_-]?url|domain|debug|verbose|log[_-]?level|node[_-]?env|env|environment|region|timezone|tz|lang|locale|enabled|disabled|app[_-]?name|project[_-]?name|version|max.*|min.*|timeout.*|retries|workers|threads|pool[_-]?size)$/i;
 
-export const containsInlineSecret = (text: string): boolean =>
-  matchesGitleaksText(text) !== null ||
-  /\b(postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/.test(text) ||
-  /-----BEGIN\s+(RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/.test(text);
+// Single regex for secret key names
+const SECRET_KEY_RE = /(?:secret|password|passwd|token|api[_-]?key|private[_-]?key|access[_-]?key|auth|credential)/i;
 
-// --- Hard-blocked paths (credential stores, not redactable) ---
+// Connection string protocol prefix
+const CONN_PROTO_RE = /^(?:postgres|mysql|mongodb|redis|amqp|https?):\/\//;
+const LOCAL_HOST_RE = /(?:@|\/\/)(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1|host\.docker\.internal)(?:[:\/]|$)/;
+const REMOTE_CONN_RE = /^(?:postgres|mysql|mongodb|redis|amqp):\/\/[^:]+:[^@]+@/;
+const EMBEDDED_CREDS_RE = /^https?:\/\/[^:]+:[^@]+@/;
+const PEM_HEADER_RE = /^-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/;
+const LONG_RANDOM_RE = /^[a-zA-Z0-9\-_./+=]{32,}$/;
+const SHORT_SAFE_RE = /^[a-zA-Z0-9._-]+$/;
+const DIGITS_RE = /^\d+$/;
 
-export const isHardBlockedPath = (path: string) => [
-  /\/\.ssh\//, /\/\.aws\//, /\/\.gnupg\//, /\/\.config\/gh\//,
-  /id_rsa/, /id_ed25519/, /\.pem$/, /\.key$/,
-].some((p) => p.test(path));
+/**
+ * Classify a KEY=VALUE pair as safe or secret.
+ * First-match-wins pipeline. Value should NOT be pre-trimmed — we trim once here.
+ */
+export function classifyValue(key: string, rawValue: string): "safe" | "secret" {
+  const v = rawValue.trim();
 
-// --- Dangerous bash commands ---
+  // Empty → safe
+  if (v.length === 0) return "safe";
 
-const dangerousCommandRules: [RegExp, string][] = [
-  [/\becho\s+.*\$[{A-Za-z_]/,                                     "Command could dump environment variables"],
-  [/\bprintf\s+.*\$[{A-Za-z_]/,                                   "Command could dump environment variables"],
-  [/(?<!\.)(?<!\w)(env|printenv)(?!\w)/,                           "Command could dump environment variables"],
-  [/\bset\s*($|\||;|&)/,                                           "Command could dump environment variables"],
-  [/\bexport\s+-p\b/,                                              "Command could dump environment variables"],
-  [/\bdeclare\s+-x\b/,                                             "Command could dump environment variables"],
-  [/\bdocker\s+inspect\b/,                                         "Command could expose container secrets"],
-  [/\bcurl\b.*(-H|--header)\s+['"]?(Authorization|X-Api-Key)/i,   "Command contains inline credentials"],
-  [/\bnode\b.*process\.env/,                                        "Command could dump environment variables"],
-  [/\bpython[3]?\b.*os\.environ/,                                  "Command could dump environment variables"],
-];
+  // Trivial values (booleans, digits, well-known strings)
+  const vLower = v.toLowerCase();
+  if (TRIVIAL_EXACT.has(vLower)) return "safe";
+  if (DIGITS_RE.test(v)) return "safe";
+  if (v.length < 8 && SHORT_SAFE_RE.test(v)) return "safe";
 
-const stripQuotes = (s: string) => s.replace(/"[^"]*"/g, '""').replace(/'[^']*'/g, "''");
+  // Common development defaults
+  if (COMMON_DEFAULTS.has(vLower)) return "safe";
 
-export function classifyBashCommand(command: string): DangerousCommand {
-  if (isHardBlockedPath(stripQuotes(command)))
-    return { dangerous: true, reason: "Command accesses a protected credential file" };
+  // Local connection strings → safe
+  if (CONN_PROTO_RE.test(v) && LOCAL_HOST_RE.test(v)) return "safe";
 
-  for (const [pattern, reason] of dangerousCommandRules) {
-    if (pattern.test(command)) return { dangerous: true, reason };
+  // Gitleaks pattern match → secret
+  if (matchesGitleaksValue(v) !== null) return "secret";
+
+  // Remote connection strings with credentials → secret
+  if (REMOTE_CONN_RE.test(v)) return "secret";
+
+  // PEM private key header → secret
+  if (PEM_HEADER_RE.test(v)) return "secret";
+
+  // Embedded HTTP credentials → secret (before safe key name check)
+  if (EMBEDDED_CREDS_RE.test(v)) return "secret";
+
+  // Safe key name heuristic
+  if (SAFE_KEY_RE.test(key)) return "safe";
+
+  // Secret key name heuristic
+  if (SECRET_KEY_RE.test(key)) return "secret";
+
+  // Long random-looking string → secret
+  if (v.length >= 32 && LONG_RANDOM_RE.test(v)) return "secret";
+
+  return "safe";
+}
+
+// ================================================================
+//  Inline secret scanning
+// ================================================================
+
+// ================================================================
+//  Inline secret redaction
+// ================================================================
+//
+//  Instead of blocking entire output, redact secrets in-place.
+//  Returns the redacted text and whether any redaction occurred.
+// ================================================================
+
+const REDACTED = "<REDACTED>";
+
+// PEM block: redact everything between BEGIN and END markers
+const PEM_BLOCK_RE = /(-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----)([\s\S]*?)(-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----)/g;
+
+// Connection strings with embedded credentials
+const INLINE_CONN_REDACT_RE = /\b((?:postgres|mysql|mongodb|redis|amqp):\/\/)([^:]+):([^@]+)@/g;
+
+// HTTP URLs with embedded credentials
+const INLINE_HTTP_CREDS_RE = /\b(https?:\/\/)([^:]+):([^@]+)@/g;
+
+export function redactInlineSecrets(text: string): { text: string; redacted: boolean } {
+  let result = text;
+  let redacted = false;
+
+  // Redact PEM private key blocks (keep markers, redact body)
+  result = result.replace(PEM_BLOCK_RE, (_match, begin, _body, end) => {
+    redacted = true;
+    return `${begin}\n${REDACTED}\n${end}`;
+  });
+
+  // Redact credentials in connection strings
+  result = result.replace(INLINE_CONN_REDACT_RE, (_match, proto, user) => {
+    redacted = true;
+    return `${proto}${user}:${REDACTED}@`;
+  });
+
+  // Redact credentials in HTTP URLs
+  result = result.replace(INLINE_HTTP_CREDS_RE, (_match, proto, user) => {
+    redacted = true;
+    return `${proto}${user}:${REDACTED}@`;
+  });
+
+  // Redact gitleaks matches
+  if (matchesGitleaksText(result) !== null) {
+    // For gitleaks matches, we need to run each rule's pattern and redact matches
+    result = redactGitleaksMatches(result);
+    if (result !== text) redacted = true;
   }
 
-  return { dangerous: false, reason: "" };
+  return { text: result, redacted };
 }
+
+function redactGitleaksMatches(text: string): string {
+  // Import would be circular, so we use the already-imported function
+  // For gitleaks, we check the full text and redact capture groups
+  // Since gitleaks patterns use capture groups for the secret part,
+  // we need access to the raw patterns. For now, do a line-by-line approach:
+  // lines that look like they contain high-entropy tokens get redacted.
+  const lines = text.split("\n");
+  const result: string[] = [];
+  for (const line of lines) {
+    if (matchesGitleaksText(line) !== null) {
+      // Redact the line but keep any key/label prefix
+      const colonIdx = line.indexOf(":");
+      const eqIdx = line.indexOf("=");
+      const sepIdx = colonIdx >= 0 && eqIdx >= 0
+        ? Math.min(colonIdx, eqIdx)
+        : colonIdx >= 0 ? colonIdx : eqIdx;
+
+      if (sepIdx >= 0 && sepIdx < 40) {
+        result.push(line.substring(0, sepIdx + 1) + " " + REDACTED);
+      } else {
+        result.push(REDACTED);
+      }
+    } else {
+      result.push(line);
+    }
+  }
+  return result.join("\n");
+}
+
+

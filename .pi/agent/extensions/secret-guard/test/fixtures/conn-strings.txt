@@ -1,0 +1,15 @@
+# Remote connection strings (should redact password)
+postgres://admin:s3cretP@ss@db.prod.example.com:5432/mydb
+mysql://root:p@ssw0rd123@mysql.prod.internal:3306/app
+mongodb://appuser:MonG0S3cr3t@mongo-cluster.example.com:27017/admin
+redis://default:r3d1sP@ss@redis.prod.example.com:6379/0
+amqp://rabbit:bunnysecret@rabbitmq.example.com:5672/vhost
+
+# Local connection strings (should stay visible)
+postgres://user:pass@localhost:5432/dev
+mysql://root:root@127.0.0.1:3306/test
+redis://default:pass@host.docker.internal:6379/0
+
+# HTTP with embedded credentials (should redact password)
+https://admin:secretpass123@api.example.com/v1
+http://deploy:tok3n@registry.internal:5000/v2

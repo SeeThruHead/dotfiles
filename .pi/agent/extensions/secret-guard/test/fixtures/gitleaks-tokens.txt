@@ -1,0 +1,13 @@
+# GitHub tokens
+GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12
+GITHUB_PAT=github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX
+
+# Slack
+SLACK_TOKEN=xoxb-000000000012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx
+
+# Stripe
+STRIPE_KEY=sk_test_1234567890abcdefghijklmnopqrstuv
+STRIPE_PK=pk_test_1234567890abcdefghijklmnopqrstuv
+
+# Generic long random
+MY_CUSTOM_VAR=aB3dEfGhIjKlMnOpQrStUvWxYz0123456789abcd
