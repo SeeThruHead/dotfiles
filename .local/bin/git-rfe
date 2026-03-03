@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# git-rfe — reflog explorer
+# Usage: git rfe [count]
+# Browse recent reflog entries with a full-screen diff preview
+
+set -euo pipefail
+
+count="${1:-200}"
+
+git reflog --format='%h  %gd  %gs  (%cr)' --no-abbrev-commit -n "$count" \
+| fzf \
+    --ansi \
+    --no-sort \
+    --reverse \
+    --prompt="reflog> " \
+    --header="  j/k:navigate  enter:copy hash  esc:quit" \
+    --bind="j:down,k:up" \
+    --bind="enter:execute-silent(echo -n {1} | pbcopy)+abort" \
+    --preview-window="right,65%,wrap" \
+    --preview='
+      hash={1}
+      printf "\e[1;33m%s\e[0m \e[1m%s\e[0m\n" "$hash" "$(git log --format="%s" -1 "$hash" 2>/dev/null)"
+      echo
+      printf "\e[2mAuthor:\e[0m  %s\n" "$(git log --format="%an <%ae>" -1 "$hash" 2>/dev/null)"
+      printf "\e[2mDate:\e[0m    %s\n" "$(git log --format="%cr" -1 "$hash" 2>/dev/null)"
+      printf "\e[2mRef:\e[0m     %s\n" "$(git log --format="%gd" -1 "$hash" 2>/dev/null)"
+      body=$(git log --format="%b" -1 "$hash" 2>/dev/null)
+      if [[ -n "$body" ]]; then
+        echo
+        printf "\e[2m%s\e[0m\n" "$body"
+      fi
+      echo
+      printf "\e[2m───────────────────────────────────────────────────\e[0m\n"
+      echo
+      git diff --stat --color=always "$hash"^ "$hash" 2>/dev/null
+      echo
+      printf "\e[2m───────────────────────────────────────────────────\e[0m\n"
+      echo
+      git diff --color=always "$hash"^ "$hash" 2>/dev/null
+    '

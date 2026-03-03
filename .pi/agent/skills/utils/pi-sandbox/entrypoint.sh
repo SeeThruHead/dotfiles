@@ -5,22 +5,26 @@ export DISPLAY=:99
 Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
 sleep 0.5
 
-# SSH: copy host keys into a writable ~/.ssh so we can add our own config
+# SSH: only set up keys if host keys were mounted (--git mode)
 mkdir -p /root/.ssh
 if [[ -d /root/.ssh-host ]]; then
   cp -a /root/.ssh-host/* /root/.ssh/ 2>/dev/null || true
   chmod 700 /root/.ssh
   chmod 600 /root/.ssh/id_* 2>/dev/null || true
   chmod 644 /root/.ssh/*.pub 2>/dev/null || true
+
+  # Accept all host keys automatically so git clone just works
+  echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null" > /root/.ssh/config
+  chmod 600 /root/.ssh/config
+
+  # Start agent and load keys (handles passphrase-less keys)
+  eval "$(ssh-agent -s)" > /dev/null 2>&1
+  ssh-add /root/.ssh/id_* 2>/dev/null || true
 fi
 
-# Accept all host keys automatically so git clone just works
-echo -e "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null" > /root/.ssh/config
-chmod 600 /root/.ssh/config
-
-# Start agent and load keys (handles passphrase-less keys)
-eval "$(ssh-agent -s)" > /dev/null 2>&1
-ssh-add /root/.ssh/id_* 2>/dev/null || true
+# Git user config (only set when passed via --git)
+[[ -n "${GIT_USER_NAME:-}" ]] && git config --global user.name "$GIT_USER_NAME"
+[[ -n "${GIT_USER_EMAIL:-}" ]] && git config --global user.email "$GIT_USER_EMAIL"
 
 # Install deps if needed
 if [[ -f "bun.lock" ]] && [[ ! -d "node_modules" ]]; then

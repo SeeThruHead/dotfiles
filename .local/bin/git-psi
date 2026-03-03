@@ -1,24 +1,9 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-# git-psi: Push selected commits, rebased onto a target branch.
-#
+# git-psi — push selected commits, rebased onto target
 # Usage: git psi [--base <branch>] [--target <branch>] [--remote <remote>] [--dry-run]
-#
-# Workflow:
-#   1. Shows commits between <base> and HEAD in a TUI
-#   2. All commits pre-selected; deselect any you don't want
-#   3. Cherry-picks selected commits onto <target>, pushes to <remote>/<current-branch>
-#   4. Local branch is never modified
-#
-# Keybindings:
-#   j/↓    Move down
-#   k/↑    Move up
-#   space  Toggle selection
-#   a      Select all
-#   n      Deselect all
-#   enter  Confirm and push
-#   q/esc  Abort
+# Navigate with j/k, space to toggle, tab to toggle, enter to confirm
+
+set -euo pipefail
 
 BASE_BRANCH="sk/process-compose"
 TARGET_BRANCH="main"
@@ -32,7 +17,7 @@ while [[ $# -gt 0 ]]; do
     --remote) REMOTE="$2"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help)
-      sed -n '3,16p' "$0" | sed 's/^# \?//'
+      sed -n '2,5p' "$0" | sed 's/^# \?//'
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -45,149 +30,83 @@ if [[ "$CURRENT_BRANCH" == "HEAD" ]]; then
   exit 1
 fi
 
-# Gather commits (oldest first for cherry-pick order)
-mapfile -t COMMIT_LINES < <(git log --reverse --oneline "$BASE_BRANCH".."HEAD" 2>/dev/null)
+# Fetch latest target
+echo "Fetching $REMOTE/$TARGET_BRANCH..."
+git fetch "$REMOTE" "$TARGET_BRANCH" --quiet
+
+# Get commits that are on the base branch but not on target (these get pre-deselected)
+declare -A BASE_COMMITS
+if git rev-parse --verify "$BASE_BRANCH" &>/dev/null; then
+  while IFS= read -r hash; do
+    BASE_COMMITS["$hash"]=1
+  done < <(git log --format='%h' "$REMOTE/$TARGET_BRANCH".."$BASE_BRANCH" 2>/dev/null)
+fi
+
+# Gather ALL commits between target and HEAD (newest first for display)
+mapfile -t COMMIT_LINES < <(git log --oneline "$REMOTE/$TARGET_BRANCH"..HEAD 2>/dev/null)
 
 if [[ ${#COMMIT_LINES[@]} -eq 0 ]]; then
-  echo "No commits found between $BASE_BRANCH and HEAD"
+  echo "No commits found between $REMOTE/$TARGET_BRANCH and HEAD"
   exit 0
 fi
 
-# Parse into parallel arrays
-HASHES=()
-MESSAGES=()
-SELECTED=()
-for line in "${COMMIT_LINES[@]}"; do
-  HASHES+=("${line%% *}")
-  MESSAGES+=("${line#* }")
-  SELECTED+=(1)
-done
-
-COUNT=${#HASHES[@]}
-CURSOR=0
-
-# --- TUI rendering ---
-
-tui_draw() {
-  # Move cursor to top of our drawing area and clear
-  printf '\e[%dA' "$((COUNT + 3))" 2>/dev/null || true
-  printf '\e[J'
-
-  local selected_count=0
-  for s in "${SELECTED[@]}"; do ((selected_count += s)) || true; done
-
-  printf '\e[1m git psi \e[0m — %d/%d commits selected (pushing onto \e[33m%s\e[0m → \e[36m%s/%s\e[0m)\n' \
-    "$selected_count" "$COUNT" "$TARGET_BRANCH" "$REMOTE" "$CURRENT_BRANCH"
-  printf '\e[2m j/k:move  space:toggle  a:all  n:none  enter:push  q:abort\e[0m\n'
-
-  for ((i = 0; i < COUNT; i++)); do
-    local marker=" "
-    [[ ${SELECTED[$i]} -eq 1 ]] && marker="●"
-    local prefix="  "
-    [[ $i -eq $CURSOR ]] && prefix="▸ "
-
-    if [[ $i -eq $CURSOR ]]; then
-      if [[ ${SELECTED[$i]} -eq 1 ]]; then
-        printf '%s\e[32m[%s]\e[0m \e[1m%s\e[0m \e[2m%s\e[0m\n' "$prefix" "$marker" "${HASHES[$i]}" "${MESSAGES[$i]}"
-      else
-        printf '%s\e[90m[%s]\e[0m \e[1m%s\e[0m \e[2m%s\e[0m\n' "$prefix" "$marker" "${HASHES[$i]}" "${MESSAGES[$i]}"
-      fi
-    else
-      if [[ ${SELECTED[$i]} -eq 1 ]]; then
-        printf '%s\e[32m[%s]\e[0m %s %s\n' "$prefix" "$marker" "${HASHES[$i]}" "${MESSAGES[$i]}"
-      else
-        printf '%s\e[90m[%s]\e[0m \e[90m%s %s\e[0m\n' "$prefix" "$marker" "${HASHES[$i]}" "${MESSAGES[$i]}"
-      fi
-    fi
-  done
-  printf '\n'
-}
-
-# Read a single keypress (handles escape sequences)
-read_key() {
-  local key
-  IFS= read -rsn1 key
-  if [[ "$key" == $'\e' ]]; then
-    local seq
-    IFS= read -rsn1 -t 0.1 seq || true
-    if [[ "$seq" == "[" ]]; then
-      IFS= read -rsn1 -t 0.1 seq || true
-      case "$seq" in
-        A) echo "up"; return ;;
-        B) echo "down"; return ;;
-      esac
-    fi
-    echo "esc"; return
+# Build fzf input: feature commits first, then base commits tagged [base]
+FZF_FEATURE=""
+FZF_BASE=""
+BASE_COUNT=0
+for ((i = 0; i < ${#COMMIT_LINES[@]}; i++)); do
+  line="${COMMIT_LINES[$i]}"
+  hash="${line%% *}"
+  msg="${line#* }"
+  if [[ -n "${BASE_COMMITS[$hash]:-}" ]]; then
+    FZF_BASE+="[base]  $hash  $msg"$'\n'
+    ((BASE_COUNT++)) || true
+  else
+    FZF_FEATURE+="        $hash  $msg"$'\n'
   fi
-  case "$key" in
-    j) echo "down" ;;
-    k) echo "up" ;;
-    " ") echo "space" ;;
-    a) echo "all" ;;
-    n) echo "none" ;;
-    "") echo "enter" ;;
-    q) echo "quit" ;;
-    *) echo "" ;;
-  esac
-}
-
-# Print initial blank lines so tui_draw has room to move up
-for ((i = 0; i < COUNT + 3; i++)); do echo; done
-
-# Save terminal settings, enable raw mode
-ORIG_STTY=$(stty -g)
-trap 'stty "$ORIG_STTY"; printf "\e[?25h"' EXIT
-stty -echo -icanon
-printf '\e[?25l'  # hide cursor
-
-tui_draw
-
-while true; do
-  key=$(read_key)
-  case "$key" in
-    down)
-      ((CURSOR < COUNT - 1)) && ((CURSOR++))
-      ;;
-    up)
-      ((CURSOR > 0)) && ((CURSOR--))
-      ;;
-    space)
-      SELECTED[$CURSOR]=$(( 1 - ${SELECTED[$CURSOR]} ))
-      ;;
-    all)
-      for ((i = 0; i < COUNT; i++)); do SELECTED[$i]=1; done
-      ;;
-    none)
-      for ((i = 0; i < COUNT; i++)); do SELECTED[$i]=0; done
-      ;;
-    enter)
-      break
-      ;;
-    quit|esc)
-      printf '\e[?25h'
-      stty "$ORIG_STTY"
-      echo "Aborted."
-      exit 0
-      ;;
-  esac
-  tui_draw
 done
+FZF_INPUT="${FZF_FEATURE}${FZF_BASE}"
 
-# Restore terminal
-printf '\e[?25h'
-stty "$ORIG_STTY"
-trap - EXIT
-
-# Collect selected commit hashes (in order, oldest first)
-PICKS=()
-for ((i = 0; i < COUNT; i++)); do
-  [[ ${SELECTED[$i]} -eq 1 ]] && PICKS+=("${HASHES[$i]}")
+# Build start action: select all, then move to last and deselect base commits
+DESELECT_CHAIN="select-all+last"
+for ((i = 0; i < BASE_COUNT; i++)); do
+  DESELECT_CHAIN+="+deselect+up"
 done
+DESELECT_CHAIN+="+first"
 
-if [[ ${#PICKS[@]} -eq 0 ]]; then
+# Run fzf multi-select
+SELECTED=$(
+  echo -n "$FZF_INPUT" \
+  | fzf \
+      --multi \
+      --ansi \
+      --no-sort \
+      --reverse \
+      --prompt="push> " \
+      --header="  pushing onto $TARGET_BRANCH → $REMOTE/$CURRENT_BRANCH
+  space:toggle  tab:toggle  enter:confirm  esc:abort" \
+      --bind="j:down,k:up,space:toggle" \
+      --bind="start:${DESELECT_CHAIN}" \
+) || { echo "Aborted."; exit 0; }
+
+if [[ -z "$SELECTED" ]]; then
   echo "No commits selected. Nothing to push."
   exit 0
 fi
+
+# Parse selected lines to extract hashes, then reverse to oldest-first for cherry-pick
+PICKS=()
+while IFS= read -r sel_line; do
+  # Strip leading whitespace and [base] tag, then grab the hash
+  cleaned="${sel_line#"${sel_line%%[![:space:]]*}"}"
+  cleaned="${cleaned#\[base\]}"
+  cleaned="${cleaned#"${cleaned%%[![:space:]]*}"}"
+  hash="${cleaned%% *}"
+  PICKS+=("$hash")
+done <<< "$SELECTED"
+
+# Reverse to oldest-first for cherry-pick (tail -r is macOS tac)
+mapfile -t PICKS < <(printf '%s\n' "${PICKS[@]}" | tail -r)
 
 echo ""
 echo "Selected ${#PICKS[@]} commit(s) to push:"
@@ -197,7 +116,7 @@ done
 echo ""
 
 if $DRY_RUN; then
-  echo "[dry-run] Would cherry-pick onto $TARGET_BRANCH and push to $REMOTE/$CURRENT_BRANCH"
+  echo "[dry-run] Would cherry-pick onto $REMOTE/$TARGET_BRANCH and push to $REMOTE/$CURRENT_BRANCH"
   exit 0
 fi
 
@@ -221,7 +140,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Create temp branch from target, cherry-pick selected commits
+# Create temp branch from latest target, cherry-pick selected commits
 git checkout -b "$TMP_BRANCH" "$REMOTE/$TARGET_BRANCH" --quiet
 
 if ! git cherry-pick "${PICKS[@]}" --no-edit; then
@@ -236,4 +155,4 @@ echo "Pushing to $REMOTE/$CURRENT_BRANCH..."
 git push "$REMOTE" "$TMP_BRANCH:$CURRENT_BRANCH" --force-with-lease
 
 echo ""
-echo "✓ Pushed ${#PICKS[@]} commit(s) to $REMOTE/$CURRENT_BRANCH (based on $TARGET_BRANCH)"
+echo "✓ Pushed ${#PICKS[@]} commit(s) to $REMOTE/$CURRENT_BRANCH (rebased on $REMOTE/$TARGET_BRANCH)"

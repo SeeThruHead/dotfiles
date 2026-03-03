@@ -1,0 +1,5 @@
+agent/sessions/
+agent/remote/
+agent/auth.json
+agent/bin/
+**/node_modules/
