@@ -4,11 +4,13 @@
 # Navigate with j/k, space to toggle, tab to toggle, enter to confirm
 
 set -euo pipefail
+LIB_DIR="${HOME}/.local/lib"
+source "$LIB_DIR/git-fzf-lib.sh"
 
-BASE_BRANCH="sk/process-compose"
-TARGET_BRANCH="main"
 REMOTE="origin"
 DRY_RUN=false
+BASE_BRANCH=""
+TARGET_BRANCH=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +25,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Resolve defaults if not provided via flags
+if [[ -z "$BASE_BRANCH" ]]; then
+  BASE_BRANCH=$(git_default_branch "$REMOTE")
+fi
+if [[ -z "$TARGET_BRANCH" ]]; then
+  TARGET_BRANCH="$BASE_BRANCH"
+fi
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if [[ "$CURRENT_BRANCH" == "HEAD" ]]; then

@@ -55,3 +55,18 @@ fi
 
 # zoxide (smart cd)
 eval "$(zoxide init zsh)"
+
+if command -v wt >/dev/null 2>&1; then
+  eval "$(command wt config shell init zsh)"
+  # Save the shell-integration wt function, wrap with custom subcommands
+  functions[_wt_inner]="$functions[wt]"
+  wt() {
+    if [[ "$1" == "rct" ]]; then
+      local branch
+      branch=$(~/.local/bin/wt-recent)
+      [[ -n "$branch" ]] && _wt_inner switch "$branch"
+    else
+      _wt_inner "$@"
+    fi
+  }
+fi

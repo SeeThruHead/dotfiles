@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# wt-recent — interactive worktree picker with diff preview
+# Outputs selected branch name. Designed to be called from a shell wrapper
+# that runs `wt switch` so shell integration (cd) works.
+
+set -euo pipefail
+LIB_DIR="${HOME}/.local/lib"
+source "$LIB_DIR/git-fzf-lib.sh"
+
+/opt/homebrew/opt/worktrunk/bin/wt list --format=json 2>/dev/null \
+| jq -r '.[] | [.branch, .symbols, .commit.message[:60]] | @tsv' \
+| while IFS=$'\t' read -r name symbols message; do
+    printf '%-35s  %-8s  %s\n' "$name" "$symbols" "$message"
+  done \
+| fzf \
+    "${FZF_GIT_DEFAULTS[@]}" \
+    --prompt="switch to> " \
+    --header="  Branch                              Status    Message" \
+    --preview-window="right,60%,wrap" \
+    --preview="
+      source \"$LIB_DIR/git-fzf-lib.sh\"
+      name=\$(echo {} | awk '{print \$1}')
+      git_branch_preview \"\$name\"
+    " \
+| awk '{print $1}'

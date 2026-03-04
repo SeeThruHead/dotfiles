@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# git-recent — interactive recent branch switcher
+# git-recent — interactive recent branch switcher with diff preview
 # Usage: git recent [count]
 # Navigate with j/k, enter to switch, esc to cancel
 
 set -euo pipefail
+LIB_DIR="${HOME}/.local/lib"
+source "$LIB_DIR/git-fzf-lib.sh"
 
 count="${1:-20}"
+current=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 
 branch=$(
   git for-each-ref \
@@ -14,19 +17,20 @@ branch=$(
     --count="$count" \
     refs/heads/ \
   | while IFS='|' read -r name date subject; do
-      current=" "
-      if [[ "$name" == "$(git symbolic-ref --short HEAD 2>/dev/null)" ]]; then
-        current="*"
-      fi
-      printf '%s %-30s  %-18s  %s\n' "$current" "$name" "$date" "${subject:0:60}"
+      marker=" "
+      [[ "$name" == "$current" ]] && marker="*"
+      printf '%s %-30s  %-18s  %s\n' "$marker" "$name" "$date" "${subject:0:60}"
     done \
   | fzf \
-      --ansi \
-      --no-sort \
+      "${FZF_GIT_DEFAULTS[@]}" \
       --prompt="switch to> " \
       --header="  Branch                          Last commit           Message" \
-      --bind="j:down,k:up" \
-      --reverse \
+      --preview-window="right,60%,wrap" \
+      --preview="
+        source \"$LIB_DIR/git-fzf-lib.sh\"
+        name=\$(echo {} | awk '{if (\$1 == \"*\") print \$2; else print \$1}')
+        git_branch_preview \"\$name\"
+      " \
   | awk '{if ($1 == "*") print $2; else print $1}'
 )
 
