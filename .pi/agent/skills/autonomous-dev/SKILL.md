@@ -8,9 +8,11 @@ description: Three-level development workflow. Level 1 (this agent) interactivel
 ```
 Level 1: Multi-Planner (this agent, interactive with user)
   └── Level 2: Orchestrator (sub-agent, sequential ticket execution)
-        ├── Level 3: Implementation agent (sub-sub-agent)
-        ├── Level 3: Review agent (sub-sub-agent)
-        └── Level 3: Fix agent (sub-sub-agent)
+        ├── Level 3: TDD agent (writes tests first, red phase)
+        ├── Level 3: Test review agent (reviews tests before implementation)
+        ├── Level 3: Implementation agent (makes tests pass, green phase)
+        ├── Level 3: Code review agent (reviews implementation)
+        └── Level 3: Fix agent (addresses review feedback)
 ```
 
 ## Prerequisites
@@ -19,6 +21,15 @@ Level 1: Multi-Planner (this agent, interactive with user)
 - `pi` CLI for spawning sub-agents via `pi -p`
 - Project uses `bun`
 - Shared utilities at `~/.pi/agent/skills/shared/` (cpu-semaphore.sh, cleanup.sh, pitimeout.sh)
+
+## Core Principle: Test-Driven Development
+
+Every ticket ships with its own tests. Tests are written **before** implementation code.
+
+- **No separate "write tests" tickets.** Tests are part of each ticket's acceptance criteria.
+- **During planning:** specify what tests to write (test cases, edge cases, expected behavior).
+- **During execution:** the TDD agent writes tests first, then the implementation agent makes them pass.
+- **During review:** the reviewer checks that tests exist, cover edge cases, and match the ticket intent.
 
 ---
 
@@ -49,7 +60,7 @@ For each ticket, one at a time:
 3. **Propose a plan.** Be specific:
    - Files to create / modify / delete
    - What the changes are in detail
-   - Tests to write or update
+   - **Tests to write (TDD):** list specific test cases, edge cases, and expected behavior. These get written before implementation.
    - Acceptance criteria
 4. **Ask the user for approval:**
    > Here's my plan for ticket {id}. Does this look right, or do you want changes?
@@ -136,11 +147,11 @@ Run: tk start <id>
 Run: tk show <id>
 Extract the "Approved Plan" from the ticket notes.
 
-### 2. Implement (spawn worker)
-Spawn an implementation agent with this prompt:
+### 2. Write Tests First — TDD (spawn worker)
+Spawn a TDD agent to write tests BEFORE any implementation code exists:
 
----START IMPLEMENTATION PROMPT---
-You are a coding agent. Implement the plan below precisely.
+---START TDD PROMPT---
+You are a TDD agent. Write tests for the plan below. Do NOT write any implementation code.
 
 ## Project Context
 - Working directory: {cwd}
@@ -156,11 +167,85 @@ Title: <ticket_title>
 <approved_plan>
 
 ## Instructions
-1. Implement the plan step by step
-2. Run tests using the semaphore-wrapped command above and fix failures
-3. Run typecheck using the semaphore-wrapped command above and fix errors
-4. BEFORE REPORTING: Re-read the ticket title and verify your implementation matches what was asked for, not just what the plan says.
-5. Do NOT commit
+1. Read the plan carefully and identify all testable behavior
+2. Write test files covering: happy paths, edge cases, error cases
+3. Create minimal type stubs/interfaces if needed so tests compile, but do NOT implement business logic
+4. Run typecheck — tests must compile (against stubs)
+5. Run tests — they should FAIL (red phase of TDD). This is expected and correct.
+6. Do NOT write implementation code. Only tests and minimal stubs.
+7. Do NOT commit
+
+At the very end output exactly one of:
+- STATUS: PASS (tests compile and fail as expected)
+- STATUS: FAIL <brief reason>
+---END TDD PROMPT---
+
+If STATUS: FAIL, retry up to 3 times with error context included.
+
+### 2b. Review Tests (spawn worker)
+Stage and diff:
+  git add -A && git diff --cached > /tmp/pi-review-tests-diff.txt
+
+Read the diff file. Spawn a test review agent:
+
+---START TEST REVIEW PROMPT---
+You are a test reviewer. Review the test code below BEFORE implementation begins.
+
+## Ticket
+ID: <ticket_id>
+Title: <ticket_title>
+
+## Plan
+<approved_plan>
+
+## Diff
+<diff_content>
+
+## Review Criteria
+1. Do the tests cover the ticket's acceptance criteria?
+2. Are edge cases covered (empty inputs, errors, boundary conditions)?
+3. Are error paths tested (not just happy paths)?
+4. Do test names clearly describe expected behavior?
+5. Are there any missing test cases that the plan calls for?
+6. Are tests testing behavior, not implementation details?
+
+Output exactly one of:
+- APPROVED
+- CHANGES_NEEDED
+  1. [file] Issue description and fix
+  2. ...
+---END TEST REVIEW PROMPT---
+
+If CHANGES_NEEDED, spawn a fix agent (same as Step 3 fix agent) to address the feedback, then re-review. Max 3 review cycles.
+
+After tests are approved, unstage: git reset HEAD
+
+### 3. Implement (spawn worker)
+Spawn an implementation agent to make the tests pass:
+
+---START IMPLEMENTATION PROMPT---
+You are a coding agent. Implement the plan below precisely. Tests already exist — your job is to make them pass.
+
+## Project Context
+- Working directory: {cwd}
+- Package manager: bun
+- Test (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run test 1 -- bunx vitest run
+- Typecheck (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run typecheck 1 -- bunx tsc --noEmit
+
+## Ticket
+ID: <ticket_id>
+Title: <ticket_title>
+
+## Plan
+<approved_plan>
+
+## Instructions
+1. Read the existing test files to understand expected behavior
+2. Implement the plan step by step, replacing any stubs with real code
+3. Run tests — all must pass (green phase of TDD)
+4. Run typecheck and fix errors
+5. BEFORE REPORTING: Re-read the ticket title and verify your implementation matches what was asked for, not just what the plan says.
+6. Do NOT commit
 
 At the very end output exactly one of:
 - STATUS: PASS
@@ -169,7 +254,7 @@ At the very end output exactly one of:
 
 If STATUS: FAIL, retry up to 3 times with error context included.
 
-### 3. Review (spawn worker)
+### 4. Review (spawn worker)
 Stage and diff:
   git add -A && git diff --cached > /tmp/pi-review-diff.txt
 
@@ -192,9 +277,10 @@ Title: <ticket_title>
 Assume there are bugs. Your job is to find them.
 1. Does the implementation match the TICKET INTENT, not just the plan?
 2. For UI changes: Is the element in the right place?
-3. Sufficient tests covering edge cases?
-4. Code style consistent with codebase?
-5. Any bugs, missing error handling, leftover debug code?
+3. Do tests exist for this ticket? Are they testing the right things?
+4. Are edge cases covered in tests?
+5. Code style consistent with codebase?
+6. Any bugs, missing error handling, leftover debug code?
 
 Output exactly one of:
 - APPROVED
@@ -239,7 +325,7 @@ At the very end output exactly one of:
 
 Max 3 review cycles per ticket.
 
-### 4. Commit and Close
+### 5. Commit and Close
 Close the ticket FIRST (so ticket files are captured as closed):
   tk close <id>
 
@@ -249,7 +335,7 @@ Then spawn a commit agent:
   git commit -m '<type>: <short description>'
   Report success or failure." --no-session 2>/dev/null
 
-### 5. Record Result
+### 6. Record Result
 Track the result for this ticket: ID, title, status (done/failed), number of review cycles, and a brief note about what happened.
 
 Move to the next ticket.
@@ -331,6 +417,12 @@ Pi acquires a synchronous lock on `~/.pi/agent/settings.json` during startup. Si
 - **Self-verification in prompts:** "BEFORE OUTPUTTING: Verify your work matches the ticket intent."
 - **Fix prompts are separate from implementation prompts:** More focused than re-running the full implementation.
 - **Sub-agents adapt:** Plans convey intent. Implementation agents figure out exact details.
+
+### TDD
+- **Never create separate "write tests" tickets.** Tests are part of every ticket's acceptance criteria.
+- **Tests before code, always.** The TDD agent writes tests, they get reviewed, then the implementation agent makes them pass.
+- **Test review catches missing coverage early.** Reviewing tests before implementation is cheaper than finding gaps after.
+- **Stubs are okay for compilation.** The TDD agent can create minimal type stubs/interfaces so tests compile, but must not implement business logic.
 
 ### Planning (Level 1)
 - **Users catch things agents miss.** That's the whole point of interactive planning.
