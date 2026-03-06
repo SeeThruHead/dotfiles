@@ -6,7 +6,21 @@ import { AssistantMessage } from "./assistant-message.js";
 import { ToolBlock } from "./tool-block.js";
 import { ChatInput } from "./chat-input.js";
 
-export const SessionView = ({ host, port }) => {
+const _log = (text) => {
+  if (typeof window !== "undefined" && window.__dbg) window.__dbg(text);
+};
+
+_log("session-view.js module loaded");
+
+const sendToSession = (sessionId, payload) => {
+  fetch(location.origin + "/api/send/" + sessionId, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch((err) => _log("‼️ POST error: " + err.message));
+};
+
+export const SessionView = ({ host, port: sessionId }) => {
   const [status, setStatus] = useState("connecting…");
   const [cwd, setCwd] = useState("");
   const [messages, setMessages] = useState([]);
@@ -17,7 +31,6 @@ export const SessionView = ({ host, port }) => {
   const [streamingTools, setStreamingTools] = useState([]);
 
   const chatRef = useRef(null);
-  const wsRef = useRef(null);
   const autoScrollRef = useRef(true);
   const streamTextRef = useRef("");
   const streamThinkingRef = useRef("");
@@ -65,34 +78,60 @@ export const SessionView = ({ host, port }) => {
     };
   }, []);
 
-  // ── WebSocket ──
+  // ── SSE + POST transport (works on Safari, no WebSocket proxy needed) ──
+
+  const sseRef = useRef(null);
 
   useEffect(() => {
-    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(protocol + "//" + host + ":" + port);
-    wsRef.current = ws;
+    const sseUrl = location.origin + "/sse/" + sessionId;
+    _log("SSE connecting to " + sseUrl);
+    const es = new EventSource(sseUrl);
+    sseRef.current = es;
 
-    ws.addEventListener("open", () => {
-      setStatus("connected");
-      ws.send(JSON.stringify({ type: "get_history" }));
-    });
+    es.onopen = () => {
+      _log("SSE open");
+    };
 
-    ws.addEventListener("close", () => {
-      setStatus("disconnected");
-      setStreaming(false);
-    });
+    es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "_sse_connected") {
+          _log("SSE upstream connected");
+          setStatus("connected");
+          // Request history via POST
+          sendToSession(sessionId, { type: "get_history" });
+          return;
+        }
+        if (msg.type === "_sse_disconnected") {
+          _log("SSE upstream disconnected");
+          setStatus("disconnected");
+          setStreaming(false);
+          return;
+        }
+        _log("SSE msg: " + msg.type);
+        try {
+          handleEvent(msg);
+        } catch (err) {
+          _log("‼️ handleEvent ERROR: " + err.message);
+        }
+      } catch (err) {
+        _log("‼️ SSE parse error: " + err.message);
+      }
+    };
 
-    ws.addEventListener("error", () => {
-      setStatus("connection error");
-    });
+    es.onerror = (e) => {
+      _log("SSE error (readyState=" + es.readyState + ")");
+      if (es.readyState === EventSource.CLOSED) {
+        setStatus("disconnected");
+        setStreaming(false);
+      }
+    };
 
-    ws.addEventListener("message", (e) => {
-      const msg = JSON.parse(e.data);
-      handleEvent(msg);
-    });
-
-    return () => ws.close();
-  }, [host, port]);
+    return () => {
+      _log("SSE closing");
+      es.close();
+    };
+  }, [host, sessionId]);
 
   // ── Event handler ──
 
@@ -146,15 +185,21 @@ export const SessionView = ({ host, port }) => {
 
   const handleEvent = (msg) => {
     if (msg.type === "metadata") {
+      _log("metadata: cwd=" + (msg.cwd || "?") + " streaming=" + msg.isStreaming);
       setCwd(msg.cwd || "");
       setStatus(msg.isStreaming ? "streaming…" : "idle");
       setStreaming(msg.isStreaming);
     }
 
     if (msg.type === "history") {
-      const rendered = buildMessagesFromHistory(msg.entries || []);
-      setMessages(rendered.messages);
-      setTools(rendered.tools);
+      try {
+        const rendered = buildMessagesFromHistory(msg.entries || []);
+        _log("history: " + rendered.messages.length + " msgs, " + Object.keys(rendered.tools).length + " tools");
+        setMessages(rendered.messages);
+        setTools(rendered.tools);
+      } catch (err) {
+        _log("‼️ buildMessagesFromHistory ERROR: " + err.message + "\n" + (err.stack || ""));
+      }
     }
 
     if (msg.type === "agent_start") {
@@ -289,13 +334,11 @@ export const SessionView = ({ host, port }) => {
 
   const handleSend = useCallback(
     (text, deliverAs) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const payload = { type: "prompt", text };
       if (deliverAs) payload.deliverAs = deliverAs;
-      ws.send(JSON.stringify(payload));
+      sendToSession(sessionId, payload);
     },
-    []
+    [sessionId]
   );
 
   const handleScrollToBottom = useCallback(() => {
@@ -307,18 +350,18 @@ export const SessionView = ({ host, port }) => {
   }, []);
 
   const handleAbort = useCallback(() => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "abort" }));
-    }
-  }, []);
+    sendToSession(sessionId, { type: "abort" });
+  }, [sessionId]);
 
-  // Clean up WebSocket when navigating away
+  // Clean up SSE when navigating away
   useEffect(() => {
-    return () => wsRef.current?.close();
-  }, [host, port]);
+    return () => sseRef.current?.close();
+  }, [host, sessionId]);
 
   // ── Render ──
+
+  // Log render state on every render so we can see what's happening
+  _log("RENDER: msgs=" + messages.length + " tools=" + Object.keys(tools).length + " status=" + status + " streaming=" + streaming + " streamText=" + (streamText ? streamText.length + "chars" : "empty"));
 
   const renderedMessages = messages.map((m, i) => {
     if (m.role === "user") {

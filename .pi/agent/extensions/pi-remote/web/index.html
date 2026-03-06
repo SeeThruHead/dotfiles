@@ -37,13 +37,89 @@ tailwind.config = {
 <body class="dark bg-[#1a1a2e] text-gray-200 font-mono text-sm h-screen overflow-hidden">
 
 <div id="app" class="h-screen flex flex-col"></div>
+<div id="error-overlay" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999; background:#1a1a2e; color:#ff6b6b; font-family:monospace; font-size:12px; padding:16px; overflow:auto; white-space:pre-wrap; word-break:break-all;"></div>
+
+<script>
+// ── Page-level debug log — plain DOM, no frameworks, catches EVERYTHING ──
+(function() {
+  var panel = document.createElement('div');
+  panel.id = 'debug-panel';
+  panel.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#000;color:#0f0;font-family:monospace;font-size:10px;padding:8px;max-height:30vh;overflow-y:auto;border-top:2px solid #0f0;white-space:pre-wrap;word-break:break-all;display:none;';
+  document.body.appendChild(panel);
+
+  var toggle = document.createElement('button');
+  toggle.textContent = '🐛';
+  toggle.style.cssText = 'position:fixed;bottom:8px;left:8px;z-index:100000;background:#222;color:#0f0;border:1px solid #0f0;border-radius:4px;width:30px;height:30px;font-size:14px;cursor:pointer;opacity:0.5;';
+  toggle.addEventListener('click', function() {
+    var vis = panel.style.display === 'none';
+    panel.style.display = vis ? 'block' : 'none';
+    toggle.style.opacity = vis ? '1' : '0.5';
+    if (vis) panel.scrollTop = panel.scrollHeight;
+  });
+  document.body.appendChild(toggle);
+
+  var lines = [];
+  window.__dbg = function(msg) {
+    var ts = new Date().toLocaleTimeString();
+    lines.push(ts + ' ' + msg);
+    if (lines.length > 80) lines.shift();
+    panel.textContent = 'DEBUG (' + lines.length + ' lines)\n' + lines.join('\n');
+    panel.scrollTop = panel.scrollHeight;
+  };
+
+  window.__dbg('debug panel loaded');
+
+  // Catch all errors
+  window.addEventListener('error', function(e) {
+    window.__dbg('‼️ ERROR: ' + e.message + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?') + ':' + (e.colno || '?'));
+    if (e.error && e.error.stack) window.__dbg('  stack: ' + e.error.stack);
+  });
+
+  // Catch unhandled promise rejections
+  window.addEventListener('unhandledrejection', function(e) {
+    var r = e.reason;
+    window.__dbg('‼️ REJECTION: ' + (r instanceof Error ? r.message + '\n' + (r.stack || '') : String(r)));
+  });
+
+  // Intercept console.error and console.warn
+  var origError = console.error;
+  var origWarn = console.warn;
+  console.error = function() {
+    var args = Array.prototype.slice.call(arguments);
+    window.__dbg('console.error: ' + args.map(String).join(' '));
+    origError.apply(console, arguments);
+  };
+  console.warn = function() {
+    var args = Array.prototype.slice.call(arguments);
+    window.__dbg('console.warn: ' + args.map(String).join(' '));
+    origWarn.apply(console, arguments);
+  };
+
+  // Also show the error overlay
+  var overlay = document.getElementById('error-overlay');
+  var tapCount = 0;
+  overlay.addEventListener('click', function() {
+    tapCount++;
+    if (tapCount >= 3) { overlay.style.display = 'none'; tapCount = 0; }
+    setTimeout(function() { tapCount = 0; }, 1000);
+  });
+})();
+</script>
 
 <script type="module">
-import { render } from "./vendor.js";
-import { html } from "./html.js";
-import App from "./app.js";
-
-render(html`<${App} />`, document.getElementById("app"));
+window.__dbg('module: starting imports');
+try {
+  const { render } = await import("./vendor.js");
+  window.__dbg('module: vendor.js loaded');
+  const { html } = await import("./html.js");
+  window.__dbg('module: html.js loaded');
+  const { default: App } = await import("./app.js");
+  window.__dbg('module: app.js loaded');
+  render(html`<${App} />`, document.getElementById("app"));
+  window.__dbg('module: render() called');
+} catch (err) {
+  window.__dbg('‼️ MODULE LOAD ERROR: ' + err.message + '\n' + (err.stack || ''));
+}
 </script>
 
 </body>

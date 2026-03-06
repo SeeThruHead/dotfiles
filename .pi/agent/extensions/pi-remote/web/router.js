@@ -2,15 +2,15 @@
 //
 // Routes:
 //   #/           → session list
-//   #/session/HOST/PORT → session view
+//   #/session/HOST/SESSION_ID → session view (WS proxied through hub)
 
 import { useState, useEffect, useCallback } from "./vendor.js";
 
 const parseHash = () => {
   const hash = window.location.hash.slice(1) || "/";
-  const sessionMatch = hash.match(/^\/session\/(.+)\/(\d+)$/);
+  const sessionMatch = hash.match(/^\/session\/(.+)\/(.+)$/);
   if (sessionMatch) {
-    return { view: "session", host: sessionMatch[1], port: Number(sessionMatch[2]) };
+    return { view: "session", host: sessionMatch[1], port: sessionMatch[2] };
   }
   return { view: "list" };
 };
@@ -25,7 +25,7 @@ export const useRouter = () => {
   }, []);
 
   const navigateToSession = useCallback((session) => {
-    window.location.hash = `/session/${session.hubHost}/${session.wsPort}`;
+    window.location.hash = `/session/${session.hubHost}/${session.id}`;
   }, []);
 
   const navigateToList = useCallback(() => {
