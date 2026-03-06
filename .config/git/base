@@ -2,3 +2,5 @@
 	fsh = !git fetch origin main && git rebase origin/main
 	pushf = push --force-with-lease
 	rct = !git recent
+[pager]
+	diff = diffnav
