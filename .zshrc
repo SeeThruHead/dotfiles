@@ -18,6 +18,7 @@ fi
 alias dc="docker-compose"
 alias gs="git status"
 alias ga="git add --all"
+alias dash="gh dash"
 
 # Go
 [[ -d ~/go/bin ]] && export PATH="$PATH:$HOME/go/bin"
