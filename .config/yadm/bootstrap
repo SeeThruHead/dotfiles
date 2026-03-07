@@ -1,0 +1,22 @@
+#!/bin/bash
+# yadm bootstrap — run after `yadm clone` or `yadm pull` on any machine
+# Installs/updates npm dependencies for pi extensions that have a package.json
+
+set -euo pipefail
+
+echo "==> yadm bootstrap"
+
+# Install/update npm deps for pi extensions
+for pkg in ~/.pi/agent/extensions/*/package.json; do
+  dir="$(dirname "$pkg")"
+  name="$(basename "$dir")"
+  if [ ! -d "$dir/node_modules" ]; then
+    echo "  Installing deps for extension: $name"
+    (cd "$dir" && npm install --no-fund --no-audit)
+  else
+    echo "  Updating deps for extension: $name"
+    (cd "$dir" && npm install --no-fund --no-audit 2>&1 | grep -v "up to date" || true)
+  fi
+done
+
+echo "==> Done"

@@ -35,6 +35,7 @@ interface AgentState {
 	outputChunks: string[];
 	toolCalls: { name: string; args: Record<string, any> }[];
 	toolCount: number;
+	toolErrors: number;
 	elapsed: number;
 	startTime: number;
 	abortSession?: () => Promise<void>;
@@ -299,7 +300,17 @@ async function createSubAgentResourceLoader(opts: {
 		extensionsOverride: hasExtensions
 			? (current) => ({
 				extensions: current.extensions.filter(e => {
-					const name = e.name || e.path?.split("/").pop()?.replace(/\.(ts|js)$/, "") || "";
+					let name = e.name || "";
+					if (!name && e.path) {
+						const filename = e.path.split("/").pop()?.replace(/\.(ts|js)$/, "") || "";
+						if (filename === "index") {
+							// Subdirectory extension: use parent dir name (e.g., web-search/index.ts → web-search)
+							const parts = e.path.split("/");
+							name = parts.length >= 2 ? parts[parts.length - 2] : filename;
+						} else {
+							name = filename;
+						}
+					}
 					return extNames.has(name);
 				}),
 				errors: current.errors,
@@ -333,6 +344,18 @@ function resolveTools(toolsParam: string | undefined, cwd: string): any[] {
 
 // ── Core agent runner (shared by both tools) ─────────────────────────────────
 
+async function runAgentWithId(
+	preAllocatedId: string,
+	parentId: string | null,
+	parentCtx: ExtensionContext,
+	params: { task: string; model?: string; tools?: string; systemPrompt?: string; cwd?: string; skills?: string; extensions?: string },
+	signal?: AbortSignal,
+	onUpdate?: (update: any) => void,
+): Promise<AgentResult> {
+	const id = preAllocatedId;
+	return _runAgentCore(id, parentId, parentCtx, params, signal, onUpdate);
+}
+
 async function runAgent(
 	parentId: string | null,
 	parentCtx: ExtensionContext,
@@ -342,6 +365,17 @@ async function runAgent(
 ): Promise<AgentResult> {
 	const letter = nextLetter();
 	const id = parentId ? `${parentId}/${letter}` : letter;
+	return _runAgentCore(id, parentId, parentCtx, params, signal, onUpdate);
+}
+
+async function _runAgentCore(
+	id: string,
+	parentId: string | null,
+	parentCtx: ExtensionContext,
+	params: { task: string; model?: string; tools?: string; systemPrompt?: string; cwd?: string; skills?: string; extensions?: string },
+	signal?: AbortSignal,
+	onUpdate?: (update: any) => void,
+): Promise<AgentResult> {
 	const cwd = params.cwd || parentCtx.cwd || process.cwd();
 
 	let model = parentCtx.model;
@@ -355,7 +389,7 @@ async function runAgent(
 
 	const agent: AgentState = {
 		id, parentId, status: "running", task: params.task, model: model?.name,
-		outputChunks: [], toolCalls: [], toolCount: 0, elapsed: 0, startTime: Date.now(),
+		outputChunks: [], toolCalls: [], toolCount: 0, toolErrors: 0, elapsed: 0, startTime: Date.now(),
 	};
 	for (const key of Array.from(agents.keys())) {
 		if (key === id || key.startsWith(id + "/")) agents.delete(key);
@@ -408,6 +442,8 @@ async function runAgent(
 			} else if (event.type === "tool_execution_start") {
 				agent.toolCount++;
 				agent.toolCalls.push({ name: event.toolName, args: event.args || {} });
+			} else if (event.type === "tool_execution_end" && event.isError) {
+				agent.toolErrors++;
 			}
 		});
 
@@ -426,9 +462,19 @@ async function runAgent(
 
 		await session.prompt(params.task);
 		agent.elapsed = Date.now() - agent.startTime;
-		agent.status = "done";
 
 		const output = agent.outputChunks.join("");
+
+		// If any tool returned an error, propagate as agent failure
+		if (agent.toolErrors > 0) {
+			agent.status = "error";
+			const errMsg = agent.toolErrors === agent.toolCount
+				? "All tool calls failed"
+				: `${agent.toolErrors}/${agent.toolCount} tool calls failed`;
+			return { id, status: "error", elapsed: agent.elapsed, toolCount: agent.toolCount, output, error: errMsg };
+		}
+
+		agent.status = "done";
 		return { id, status: "done", elapsed: agent.elapsed, toolCount: agent.toolCount, output };
 	} catch (err: any) {
 		agent.elapsed = Date.now() - agent.startTime;
@@ -450,8 +496,10 @@ async function runAgent(
 function formatAgentResult(result: AgentResult, maxOutput: number = 8000) {
 	const truncated = result.output.length > maxOutput ? result.output.slice(0, maxOutput) + "\n\n... [truncated]" : result.output;
 	if (result.status === "error") {
+		const errorText = `Agent ${result.id} failed (${formatElapsed(result.elapsed)}, ${result.toolCount} tools): ${result.error}`;
+		const body = truncated ? `\n\n${truncated}` : "";
 		return {
-			content: [{ type: "text" as const, text: `Agent ${result.id} failed: ${result.error}` }],
+			content: [{ type: "text" as const, text: errorText + body }],
 			details: { agentId: result.id, status: "error", elapsed: result.elapsed, toolCount: result.toolCount },
 			isError: true,
 		};
@@ -735,20 +783,61 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			latestCtx = ctx;
-			const results = await Promise.all(
-				params.agents.map((spec: any) => runAgent(null, ctx, spec, signal, onUpdate))
-			);
-			const summary = results.map(r => {
-				const maxOutput = 4000;
-				const truncated = r.output.length > maxOutput ? r.output.slice(0, maxOutput) + "\n... [truncated]" : r.output;
-				const icon = r.status === "done" ? "✓" : "✗";
-				return `${icon} Agent ${r.id} (${formatElapsed(r.elapsed)}, ${r.toolCount} tools)${r.error ? `: ${r.error}` : ""}\n${truncated}`;
-			}).join("\n\n---\n\n");
-			const allDone = results.every(r => r.status === "done");
-			return {
-				content: [{ type: "text", text: `${results.length} agents completed${allDone ? "" : " (some failed)"}\n\n${summary}` }],
-				details: { status: allDone ? "done" : "partial", count: results.length, agents: results.map(r => ({ id: r.id, status: r.status })) },
+			const total = params.agents.length;
+
+			// Pre-allocate IDs so we can track them from the start
+			const agentIds: string[] = [];
+			for (let i = 0; i < total; i++) agentIds.push(nextLetter());
+
+			// Send aggregate progress from the global agents map
+			const sendProgress = () => {
+				const agentStatuses = agentIds.map(id => {
+					const a = agents.get(id);
+					if (!a) return { id, status: "pending" as const, toolCount: 0 };
+					return { id, status: a.status, toolCount: a.toolCount };
+				});
+				const running = agentStatuses.filter(a => a.status === "running").length;
+				const done = agentStatuses.filter(a => a.status === "done").length;
+				const failed = agentStatuses.filter(a => a.status === "error").length;
+				const pending = agentStatuses.filter(a => a.status === "pending").length;
+				const parts: string[] = [];
+				if (running > 0) parts.push(`${running} running`);
+				if (done > 0) parts.push(`${done} done`);
+				if (failed > 0) parts.push(`${failed} failed`);
+				if (pending > 0) parts.push(`${pending} pending`);
+				const statusLine = parts.join(", ") || "starting...";
+
+				onUpdate?.({
+					content: [{ type: "text", text: `${total} agents: ${statusLine}` }],
+					details: { status: "running", count: total, agents: agentStatuses },
+				});
 			};
+
+			// Progress timer for aggregate updates
+			sendProgress();
+			const progressTimer = setInterval(sendProgress, 1500);
+
+			try {
+				const results = await Promise.all(
+					params.agents.map((spec: any, i: number) =>
+						runAgentWithId(agentIds[i], null, ctx, spec, signal, undefined)
+					)
+				);
+
+				const summary = results.map(r => {
+					const maxOutput = 4000;
+					const truncated = r.output.length > maxOutput ? r.output.slice(0, maxOutput) + "\n... [truncated]" : r.output;
+					const icon = r.status === "done" ? "✓" : "✗";
+					return `${icon} Agent ${r.id} (${formatElapsed(r.elapsed)}, ${r.toolCount} tools)${r.error ? `: ${r.error}` : ""}\n${truncated}`;
+				}).join("\n\n---\n\n");
+				const allDone = results.every(r => r.status === "done");
+				return {
+					content: [{ type: "text", text: `${results.length} agents completed${allDone ? "" : " (some failed)"}\n\n${summary}` }],
+					details: { status: allDone ? "done" : "partial", count: results.length, agents: results.map(r => ({ id: r.id, status: r.status })) },
+				};
+			} finally {
+				clearInterval(progressTimer);
+			}
 		},
 
 		renderCall(args, theme) {
@@ -760,10 +849,37 @@ export default function (pi: ExtensionAPI) {
 			return new Text(theme.fg("toolTitle", theme.bold("spawn_agents_parallel")) + theme.fg("dim", ` (${count} agents)`) + "\n" + tasks, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded, isPartial }, theme) {
 			const d = result.details as any;
 			if (!d) { const t = result.content[0]; return new Text(t?.type === "text" ? t.text : "(no output)", 0, 0); }
-			const hdr = theme.fg(d.status === "done" ? "success" : "warning", `${d.count} agents completed`);
+
+			// ── Running: show aggregate progress ──
+			if (isPartial || d.status === "running") {
+				const agentStatuses = (d.agents || []) as Array<{ id: string; status: string; toolCount?: number }>;
+				const total = d.count || agentStatuses.length || "?";
+				const running = agentStatuses.filter(a => a.status === "running").length;
+				const done = agentStatuses.filter(a => a.status === "done").length;
+				const failed = agentStatuses.filter(a => a.status === "error").length;
+
+				const parts: string[] = [];
+				if (running > 0) parts.push(theme.fg("accent", `${running} running`));
+				if (done > 0) parts.push(theme.fg("success", `${done} done`));
+				if (failed > 0) parts.push(theme.fg("error", `${failed} failed`));
+				const statusLine = parts.length > 0 ? parts.join(", ") : theme.fg("dim", "starting...");
+
+				let text = theme.fg("accent", `● ${total} agents: `) + statusLine;
+				for (const a of agentStatuses) {
+					const icon = a.status === "done" ? "✓" : a.status === "error" ? "✗" : "●";
+					const color = a.status === "done" ? "success" : a.status === "error" ? "error" : "accent";
+					const tc = a.toolCount != null ? theme.fg("dim", ` T:${a.toolCount}`) : "";
+					text += "\n  " + theme.fg(color, `${icon} ${a.id}`) + tc;
+				}
+				return new Text(text, 0, 0);
+			}
+
+			// ── Completed: show final summary ──
+			const allDone = d.status === "done";
+			const hdr = theme.fg(allDone ? "success" : "error", `${d.count} agents completed${allDone ? "" : " (some failed)"}`);
 			const t = result.content[0];
 			const full = t?.type === "text" ? t.text : "(no output)";
 			if (expanded) return new Text(hdr + "\n\n" + full, 0, 0);
