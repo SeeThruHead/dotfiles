@@ -13,6 +13,7 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import {
 	AuthStorage, createAgentSession, createExtensionRuntime,
+	DefaultResourceLoader, getAgentDir,
 	ModelRegistry, type ResourceLoader, SessionManager, SettingsManager,
 	createReadTool, createBashTool, createEditTool, createWriteTool,
 	createGrepTool, createFindTool, createLsTool,
@@ -254,21 +255,67 @@ const SUB_AGENT_SYSTEM_PROMPT = `You are an autonomous sub-agent. You must follo
 6. You may kill your own process (kill $$) if asked — this is safe, your parent handles cleanup.
 7. Use normal judgment about destructive operations (don't rm -rf /, etc.) but do not refuse tasks just because they seem unusual.`;
 
-// ── Minimal ResourceLoader ──────────────────────────────────────────────────
+// ── Resource loader for sub-agents ──────────────────────────────────────────
 
-function createMinimalResourceLoader(append?: string): ResourceLoader {
-	return {
-		getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-		getSkills: () => ({ skills: [], diagnostics: [] }),
-		getPrompts: () => ({ prompts: [], diagnostics: [] }),
-		getThemes: () => ({ themes: [], diagnostics: [] }),
-		getAgentsFiles: () => ({ agentsFiles: [] }),
-		getSystemPrompt: () => SUB_AGENT_SYSTEM_PROMPT + (append ? "\n\n" + append : ""),
-		getAppendSystemPrompt: () => [],
-		getPathMetadata: () => new Map(),
-		extendResources: () => {},
-		reload: async () => {},
-	};
+async function createSubAgentResourceLoader(opts: {
+	cwd: string;
+	systemPrompt?: string;
+	skills?: string[];
+	extensions?: string[];
+}): Promise<ResourceLoader> {
+	const hasSkills = opts.skills && opts.skills.length > 0;
+	const hasExtensions = opts.extensions && opts.extensions.length > 0;
+
+	// If no skills or extensions requested, use minimal loader (fast, no disk I/O)
+	if (!hasSkills && !hasExtensions) {
+		const append = opts.systemPrompt;
+		return {
+			getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+			getSkills: () => ({ skills: [], diagnostics: [] }),
+			getPrompts: () => ({ prompts: [], diagnostics: [] }),
+			getThemes: () => ({ themes: [], diagnostics: [] }),
+			getAgentsFiles: () => ({ agentsFiles: [] }),
+			getSystemPrompt: () => SUB_AGENT_SYSTEM_PROMPT + (append ? "\n\n" + append : ""),
+			getAppendSystemPrompt: () => [],
+			getPathMetadata: () => new Map(),
+			extendResources: () => {},
+			reload: async () => {},
+		};
+	}
+
+	// Use DefaultResourceLoader with filtering for skills/extensions
+	const skillNames = new Set(opts.skills || []);
+	const extNames = new Set(opts.extensions || []);
+
+	const loader = new DefaultResourceLoader({
+		cwd: opts.cwd,
+		agentDir: getAgentDir(),
+		noThemes: true,
+		noPromptTemplates: true,
+		skillsOverride: (current) => ({
+			skills: hasSkills ? current.skills.filter(s => skillNames.has(s.name)) : [],
+			diagnostics: current.diagnostics,
+		}),
+		extensionsOverride: hasExtensions
+			? (current) => ({
+				extensions: current.extensions.filter(e => {
+					const name = e.name || e.path?.split("/").pop()?.replace(/\.(ts|js)$/, "") || "";
+					return extNames.has(name);
+				}),
+				errors: current.errors,
+				runtime: current.runtime,
+			})
+			: (_current) => ({
+				extensions: [],
+				errors: [],
+				runtime: createExtensionRuntime(),
+			}),
+		// Sub-agents don't need AGENTS.md — they get the sub-agent system prompt
+		agentsFilesOverride: () => ({ agentsFiles: [] }),
+		systemPromptOverride: () => SUB_AGENT_SYSTEM_PROMPT + (opts.systemPrompt ? "\n\n" + opts.systemPrompt : ""),
+	});
+	await loader.reload();
+	return loader;
 }
 
 // ── Tool factories ──────────────────────────────────────────────────────────
@@ -289,7 +336,7 @@ function resolveTools(toolsParam: string | undefined, cwd: string): any[] {
 async function runAgent(
 	parentId: string | null,
 	parentCtx: ExtensionContext,
-	params: { task: string; model?: string; tools?: string; systemPrompt?: string; cwd?: string },
+	params: { task: string; model?: string; tools?: string; systemPrompt?: string; cwd?: string; skills?: string; extensions?: string },
 	signal?: AbortSignal,
 	onUpdate?: (update: any) => void,
 ): Promise<AgentResult> {
@@ -335,11 +382,17 @@ async function runAgent(
 		const authStorage = AuthStorage.create();
 		const modelRegistry = new ModelRegistry(authStorage);
 		const childTools = createChildTools(id, parentCtx, childSignal);
+		const resourceLoader = await createSubAgentResourceLoader({
+			cwd,
+			systemPrompt: params.systemPrompt,
+			skills: params.skills?.split(",").map(s => s.trim()).filter(Boolean),
+			extensions: params.extensions?.split(",").map(s => s.trim()).filter(Boolean),
+		});
 
 		const created = await createAgentSession({
 			cwd, model: model || undefined, thinkingLevel: "off",
 			authStorage, modelRegistry,
-			resourceLoader: createMinimalResourceLoader(params.systemPrompt),
+			resourceLoader,
 			tools: resolveTools(params.tools, cwd),
 			customTools: childTools,
 			sessionManager: SessionManager.inMemory(),
@@ -436,6 +489,8 @@ function createChildTools(parentId: string, parentCtx: ExtensionContext, parentS
 				tools: Type.Optional(Type.String({ description: "Comma-separated tool list" })),
 				systemPrompt: Type.Optional(Type.String({ description: "Additional system prompt" })),
 				cwd: Type.Optional(Type.String({ description: "Working directory" })),
+				skills: Type.Optional(Type.String({ description: "Comma-separated skill names to load (e.g., autonomous-dev,code-maat)" })),
+				extensions: Type.Optional(Type.String({ description: "Comma-separated extension names to load" })),
 			}),
 			async execute(_id, params, signal, onUpdate, _ctx) {
 				return formatAgentResult(await runAgent(parentId, parentCtx, params, mergeSignals(signal, parentSignal), onUpdate));
@@ -452,6 +507,8 @@ function createChildTools(parentId: string, parentCtx: ExtensionContext, parentS
 					tools: Type.Optional(Type.String({ description: "Comma-separated tool list" })),
 					systemPrompt: Type.Optional(Type.String({ description: "Additional system prompt" })),
 					cwd: Type.Optional(Type.String({ description: "Working directory" })),
+				skills: Type.Optional(Type.String({ description: "Comma-separated skill names to load (e.g., autonomous-dev,code-maat)" })),
+				extensions: Type.Optional(Type.String({ description: "Comma-separated extension names to load" })),
 				}), { description: "Array of agent specs to run in parallel" }),
 			}),
 			async execute(_id, params, signal, onUpdate, _ctx) {
@@ -623,6 +680,8 @@ export default function (pi: ExtensionAPI) {
 			tools: Type.Optional(Type.String({ description: "Comma-separated tool list (e.g., read,grep,find,ls,bash). Defaults to all tools." })),
 			systemPrompt: Type.Optional(Type.String({ description: "Additional system prompt to append for the sub-agent" })),
 			cwd: Type.Optional(Type.String({ description: "Working directory for the sub-agent process" })),
+			skills: Type.Optional(Type.String({ description: "Comma-separated skill names to load (e.g., autonomous-dev,code-maat)" })),
+			extensions: Type.Optional(Type.String({ description: "Comma-separated extension names to load" })),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -669,6 +728,8 @@ export default function (pi: ExtensionAPI) {
 				tools: Type.Optional(Type.String({ description: "Comma-separated tool list" })),
 				systemPrompt: Type.Optional(Type.String({ description: "Additional system prompt" })),
 				cwd: Type.Optional(Type.String({ description: "Working directory" })),
+				skills: Type.Optional(Type.String({ description: "Comma-separated skill names to load (e.g., autonomous-dev,code-maat)" })),
+				extensions: Type.Optional(Type.String({ description: "Comma-separated extension names to load" })),
 			}), { description: "Array of agent specs to run in parallel" }),
 		}),
 
