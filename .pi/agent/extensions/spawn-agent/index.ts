@@ -103,18 +103,26 @@ function fmtTool(name: string, args: Record<string, any>): string {
 
 // ── Tree ─────────────────────────────────────────────────────────────────────
 
-function flattenTree(): Array<{ id: string; depth: number; agent: AgentState }> {
-	const result: Array<{ id: string; depth: number; agent: AgentState }> = [];
-	function walk(parentId: string | null, depth: number) {
+interface TreeNode { id: string; depth: number; agent: AgentState; prefix: string }
+
+function flattenTree(): TreeNode[] {
+	const result: TreeNode[] = [];
+	function walk(parentId: string | null, depth: number, parentPrefix: string) {
 		const children = Array.from(agents.values())
 			.filter(a => a.parentId === parentId)
 			.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
-		for (const agent of children) {
-			result.push({ id: agent.id, depth, agent });
-			walk(agent.id, depth + 1);
+		for (let i = 0; i < children.length; i++) {
+			const agent = children[i];
+			const isLast = i === children.length - 1;
+			const connector = depth === 0 ? "" : (isLast ? "└─ " : "├─ ");
+			const prefix = parentPrefix + connector;
+			// For children of this node, extend the prefix with either "│  " or "   "
+			const childPrefix = depth === 0 ? "" : parentPrefix + (isLast ? "   " : "│  ");
+			result.push({ id: agent.id, depth, agent, prefix });
+			walk(agent.id, depth + 1, childPrefix);
 		}
 	}
-	walk(null, 0);
+	walk(null, 0, "");
 	return result;
 }
 
@@ -132,22 +140,22 @@ function buildAgentsListContent(selectedIndex: number): string[] {
 	const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
 
 	for (let i = 0; i < tree.length; i++) {
-		const { agent, depth } = tree[i];
+		const { agent, depth, prefix } = tree[i];
 		const sel = i === selectedIndex;
-		const indent = "  ".repeat(depth);
-		const branch = depth > 0 ? "├─ " : "";
 		const colorFn = agent.status === "running" ? yellow : agent.status === "done" ? green : red;
 		const icon = agent.status === "running" ? "●" : agent.status === "done" ? "✓" : "✗";
 		const cursor = sel ? "▸ " : "  ";
 		const taskOneLine = agent.task.replace(/[\n\r]+/g, " ").trim();
-		lines.push(`${cursor}${indent}${branch}${colorFn(icon)} ${colorFn(agent.id)} ${taskOneLine}  ${formatElapsed(agent.elapsed)} T:${agent.toolCount}`);
+		lines.push(`${cursor}${prefix}${colorFn(icon)} ${colorFn(agent.id)} ${taskOneLine}  ${formatElapsed(agent.elapsed)} T:${agent.toolCount}`);
 
+		// Detail line — continuation prefix keeps the tree lines connected
+		const detailPrefix = depth === 0 ? "    " : prefix.replace(/[├└]─ $/, "   ").replace(/│  $/, "│  ");
 		const lastTool = agent.toolCalls.length > 0
 			? fmtTool(agent.toolCalls[agent.toolCalls.length - 1].name, agent.toolCalls[agent.toolCalls.length - 1].args)
 			: "";
 		const lastOut = agent.outputChunks.join("").split("\n").filter(l => l.trim()).pop() || "";
 		const detail = lastTool || lastOut || "(no activity)";
-		lines.push(dim(`  ${indent}${depth > 0 ? "   " : ""}  → ${detail}`));
+		lines.push(dim(`  ${detailPrefix}  → ${detail}`));
 	}
 	return lines;
 }
@@ -187,13 +195,8 @@ function buildAgentOutputContent(agentId: string): string[] {
 let widgetInstalled = false;
 let globalRenderTimer: ReturnType<typeof setInterval> | null = null;
 
-function renderDashboard() {
-	if (!latestCtx?.hasUI) return;
-	if (overlayRequestRender) { overlayRequestRender(); return; }
-	if (agents.size === 0) {
-		if (widgetInstalled) { latestCtx.ui.setWidget("agent-dashboard", undefined); widgetInstalled = false; }
-		return;
-	}
+function agentStatusText(): string {
+	if (agents.size === 0) return "no agents";
 	const running = Array.from(agents.values()).filter(a => a.status === "running").length;
 	const done = Array.from(agents.values()).filter(a => a.status === "done").length;
 	const errored = Array.from(agents.values()).filter(a => a.status === "error").length;
@@ -201,8 +204,28 @@ function renderDashboard() {
 	if (running > 0) parts.push(`${running} running`);
 	if (done > 0) parts.push(`${done} done`);
 	if (errored > 0) parts.push(`${errored} failed`);
+	return parts.join(", ");
+}
+
+function setStatusBarWidget() {
+	if (!latestCtx?.hasUI) return;
+	const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
+	latestCtx.ui.setWidget("agent-status-bar", (_tui, _theme) => ({
+		render(width: number): string[] {
+			const border = dim("─".repeat(width));
+			const agentSection = `🤖 ${agentStatusText()}`;
+			const keyHint = agents.size > 0 ? dim("  alt+a: view") : "";
+			return [border, ` ${agentSection}${keyHint}`];
+		},
+		invalidate() {},
+	}));
 	widgetInstalled = true;
-	latestCtx.ui.setWidget("agent-dashboard", [`🤖 Agents: ${parts.join(", ")}  [alt+a: view]`]);
+}
+
+function renderDashboard() {
+	if (!latestCtx?.hasUI) return;
+	if (overlayRequestRender) { overlayRequestRender(); return; }
+	setStatusBarWidget();
 }
 
 function startGlobalRenderTimer() {
@@ -221,6 +244,16 @@ function stopGlobalRenderTimer() {
 	if (globalRenderTimer) { clearInterval(globalRenderTimer); globalRenderTimer = null; }
 }
 
+const SUB_AGENT_SYSTEM_PROMPT = `You are an autonomous sub-agent. You must follow these rules:
+
+1. NEVER ask for clarification or user input — there is no human on the other end.
+2. ALWAYS complete your task and return a result. Do not stop mid-way.
+3. Be concise. Return your result directly, no preamble.
+4. If you encounter an error, report it and move on. Do not ask what to do.
+5. If the task is ambiguous, make a reasonable choice and execute it.
+6. You may kill your own process (kill $$) if asked — this is safe, your parent handles cleanup.
+7. Use normal judgment about destructive operations (don't rm -rf /, etc.) but do not refuse tasks just because they seem unusual.`;
+
 // ── Minimal ResourceLoader ──────────────────────────────────────────────────
 
 function createMinimalResourceLoader(append?: string): ResourceLoader {
@@ -230,7 +263,7 @@ function createMinimalResourceLoader(append?: string): ResourceLoader {
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
 		getAgentsFiles: () => ({ agentsFiles: [] }),
-		getSystemPrompt: () => "You are a helpful coding assistant. Be concise." + (append ? "\n\n" + append : ""),
+		getSystemPrompt: () => SUB_AGENT_SYSTEM_PROMPT + (append ? "\n\n" + append : ""),
 		getAppendSystemPrompt: () => [],
 		getPathMetadata: () => new Map(),
 		extendResources: () => {},
@@ -283,13 +316,25 @@ async function runAgent(
 	agents.set(id, agent);
 	startGlobalRenderTimer();
 
+	// Local abort controller — cascades to all children via childSignal
+	const localAbort = new AbortController();
+	const childSignal = localAbort.signal;
+
+	// If parent signal fires, abort this level (which cascades down)
+	let parentAbortHandler: (() => void) | null = null;
+	if (signal) {
+		parentAbortHandler = () => localAbort.abort();
+		if (signal.aborted) localAbort.abort();
+		else signal.addEventListener("abort", parentAbortHandler, { once: true });
+	}
+
 	let session: any = null;
 	let progressInterval: ReturnType<typeof setInterval> | null = null;
 
 	try {
 		const authStorage = AuthStorage.create();
 		const modelRegistry = new ModelRegistry(authStorage);
-		const childTools = createChildTools(id, parentCtx);
+		const childTools = createChildTools(id, parentCtx, childSignal);
 
 		const created = await createAgentSession({
 			cwd, model: model || undefined, thinkingLevel: "off",
@@ -302,7 +347,7 @@ async function runAgent(
 		});
 		session = created.session;
 
-		agent.abortSession = async () => { try { await session.abort(); } catch {} };
+		agent.abortSession = async () => { localAbort.abort(); try { await session.abort(); } catch {} };
 
 		session.subscribe((event: any) => {
 			if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
@@ -323,11 +368,8 @@ async function runAgent(
 			}
 		}, 2000);
 
-		if (signal) {
-			const onAbort = () => { try { session.abort(); } catch {} };
-			if (signal.aborted) session.abort();
-			else signal.addEventListener("abort", onAbort, { once: true });
-		}
+		if (childSignal.aborted) session.abort();
+		else childSignal.addEventListener("abort", () => { try { session.abort(); } catch {} }, { once: true });
 
 		await session.prompt(params.task);
 		agent.elapsed = Date.now() - agent.startTime;
@@ -341,8 +383,14 @@ async function runAgent(
 		agent.outputChunks.push(`\nError: ${err.message}`);
 		return { id, status: "error", elapsed: agent.elapsed, toolCount: agent.toolCount, output: "", error: err.message };
 	} finally {
+		// Abort all children, clean up resources
+		localAbort.abort();
 		if (progressInterval) clearInterval(progressInterval);
 		if (session) { try { session.dispose(); } catch {} }
+		// Remove parent listener to avoid leak
+		if (signal && parentAbortHandler) {
+			signal.removeEventListener("abort", parentAbortHandler);
+		}
 	}
 }
 
@@ -363,7 +411,20 @@ function formatAgentResult(result: AgentResult, maxOutput: number = 8000) {
 
 // ── Child tools (both spawn_agent and spawn_agents_parallel, for recursion) ──
 
-function createChildTools(parentId: string, parentCtx: ExtensionContext): ToolDefinition[] {
+/** Combine two AbortSignals — fires when either fires */
+function mergeSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
+	if (!a && !b) return undefined;
+	if (!a) return b;
+	if (!b) return a;
+	const controller = new AbortController();
+	const abort = () => controller.abort();
+	if (a.aborted || b.aborted) { controller.abort(); return controller.signal; }
+	a.addEventListener("abort", abort, { once: true });
+	b.addEventListener("abort", abort, { once: true });
+	return controller.signal;
+}
+
+function createChildTools(parentId: string, parentCtx: ExtensionContext, parentSignal: AbortSignal): ToolDefinition[] {
 	return [
 		{
 			name: "spawn_agent",
@@ -377,7 +438,7 @@ function createChildTools(parentId: string, parentCtx: ExtensionContext): ToolDe
 				cwd: Type.Optional(Type.String({ description: "Working directory" })),
 			}),
 			async execute(_id, params, signal, onUpdate, _ctx) {
-				return formatAgentResult(await runAgent(parentId, parentCtx, params, signal, onUpdate));
+				return formatAgentResult(await runAgent(parentId, parentCtx, params, mergeSignals(signal, parentSignal), onUpdate));
 			},
 		},
 		{
@@ -394,8 +455,9 @@ function createChildTools(parentId: string, parentCtx: ExtensionContext): ToolDe
 				}), { description: "Array of agent specs to run in parallel" }),
 			}),
 			async execute(_id, params, signal, onUpdate, _ctx) {
+				const merged = mergeSignals(signal, parentSignal);
 				const results = await Promise.all(
-					params.agents.map((spec: any) => runAgent(parentId, parentCtx, spec, signal, onUpdate))
+					params.agents.map((spec: any) => runAgent(parentId, parentCtx, spec, merged, onUpdate))
 				);
 				const summary = results.map(r => {
 					const maxOutput = 4000;
@@ -677,7 +739,7 @@ export default function (pi: ExtensionAPI) {
 		latestCtx = ctx; stopGlobalRenderTimer();
 		await Promise.allSettled(Array.from(agents.values()).map(a => a.abortSession?.()));
 		agents.clear(); globalLetterCounter = 0; widgetInstalled = false;
-		ctx.ui.setWidget("agent-dashboard", undefined);
+		setStatusBarWidget();
 	});
 
 	pi.on("session_shutdown", async () => {
