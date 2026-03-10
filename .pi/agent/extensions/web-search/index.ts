@@ -460,11 +460,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 				);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				return {
-					content: [{ type: "text", text: `Failed to start search engine.\n\n${msg}` }],
-					details: { error: true },
-					isError: true,
-				};
+				throw new Error(`Failed to start search engine.\n\n${msg}`);
 			}
 
 			if (signal?.aborted) {
@@ -499,11 +495,7 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 				};
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				return {
-					content: [{ type: "text", text: `Search failed after retries: ${msg}` }],
-					details: { error: true },
-					isError: true,
-				};
+				throw new Error(`Search failed after retries: ${msg}`);
 			}
 		},
 
@@ -520,10 +512,6 @@ export default function webSearchExtension(pi: ExtensionAPI) {
 			}
 
 			const text = result.content?.[0]?.type === "text" ? result.content[0].text : "No results";
-
-			if (result.isError) {
-				return new Text(theme.fg("error", text), 0, 0);
-			}
 
 			if (!expanded) {
 				const firstLine = text.split("\n")[0] || "Search complete";

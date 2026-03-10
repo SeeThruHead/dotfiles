@@ -18,11 +18,23 @@ import {
 	createReadTool, createBashTool, createEditTool, createWriteTool,
 	createGrepTool, createFindTool, createLsTool,
 } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import { Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { matchesKey } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import * as os from "node:os";
 import { renderBox } from "./box.js";
+
+// ── Color helpers ────────────────────────────────────────────────────────────
+
+const yellow = (s: string) => `\x1b[33m${s}\x1b[39m`;
+const green = (s: string) => `\x1b[32m${s}\x1b[39m`;
+const red = (s: string) => `\x1b[31m${s}\x1b[39m`;
+const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
+
+const statusColor = (status: "running" | "done" | "error") =>
+	status === "running" ? yellow : status === "done" ? green : red;
+const statusIcon = (status: "running" | "done" | "error") =>
+	status === "running" ? "●" : status === "done" ? "✓" : "✗";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,17 +101,18 @@ function fmtTool(name: string, args: Record<string, any>): string {
 		const home = os.homedir();
 		return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
 	};
+	const trunc = (s: string, max: number) => truncateToWidth(s, max);
 	switch (name) {
-		case "bash": { const c = (args.command as string) || "..."; return `$ ${c.length > 50 ? c.slice(0, 47) + "..." : c}`; }
+		case "bash": return `$ ${trunc((args.command as string) || "...", 50)}`;
 		case "read": return `read ${shorten((args.file_path || args.path || "...") as string)}`;
 		case "write": return `write ${shorten((args.file_path || args.path || "...") as string)}`;
 		case "edit": return `edit ${shorten((args.file_path || args.path || "...") as string)}`;
 		case "grep": return `grep /${args.pattern || ""}/ in ${shorten((args.path || ".") as string)}`;
 		case "find": return `find ${args.pattern || "*"} in ${shorten((args.path || ".") as string)}`;
 		case "ls": return `ls ${shorten((args.path || ".") as string)}`;
-		case "spawn_agent": { const t = (args.task as string) || "..."; return `spawn: ${t.length > 40 ? t.slice(0, 37) + "..." : t}`; }
+		case "spawn_agent": return `spawn: ${trunc((args.task as string) || "...", 40)}`;
 		case "spawn_agents_parallel": return `spawn_parallel: ${(args.agents as any[])?.length || "?"} agents`;
-		default: { const s = JSON.stringify(args); return `${name} ${s.length > 40 ? s.slice(0, 37) + "..." : s}`; }
+		default: return `${name} ${trunc(JSON.stringify(args), 40)}`;
 	}
 }
 
@@ -136,17 +149,11 @@ function buildAgentsListContent(selectedIndex: number): string[] {
 	lines.push(" Agents");
 	lines.push("");
 
-	const yellow = (s: string) => `\x1b[33m${s}\x1b[39m`;
-	const green = (s: string) => `\x1b[32m${s}\x1b[39m`;
-	const red = (s: string) => `\x1b[31m${s}\x1b[39m`;
-	const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
-
 	for (let i = 0; i < tree.length; i++) {
 		const { agent, depth, prefix } = tree[i];
-		const sel = i === selectedIndex;
-		const colorFn = agent.status === "running" ? yellow : agent.status === "done" ? green : red;
-		const icon = agent.status === "running" ? "●" : agent.status === "done" ? "✓" : "✗";
-		const cursor = sel ? "▸ " : "  ";
+		const colorFn = statusColor(agent.status);
+		const icon = statusIcon(agent.status);
+		const cursor = i === selectedIndex ? "▸ " : "  ";
 		const taskOneLine = agent.task.replace(/[\n\r]+/g, " ").trim();
 		lines.push(`${cursor}${prefix}${colorFn(icon)} ${colorFn(agent.id)} ${taskOneLine}  ${formatElapsed(agent.elapsed)} T:${agent.toolCount}`);
 
@@ -166,13 +173,10 @@ function buildAgentOutputContent(agentId: string): string[] {
 	const agent = agents.get(agentId);
 	if (!agent) return [" Agent not found"];
 
-	const yellow = (s: string) => `\x1b[33m${s}\x1b[39m`;
-	const green = (s: string) => `\x1b[32m${s}\x1b[39m`;
-	const red = (s: string) => `\x1b[31m${s}\x1b[39m`;
-	const colorFn = agent.status === "running" ? yellow : agent.status === "done" ? green : red;
+	const colorFn = statusColor(agent.status);
+	const icon = statusIcon(agent.status);
 
 	const lines: string[] = [];
-	const icon = agent.status === "running" ? "●" : agent.status === "done" ? "✓" : "✗";
 	lines.push(` ${colorFn(icon)} ${colorFn(`Agent ${agent.id}`)} | ${formatElapsed(agent.elapsed)} | Tools: ${agent.toolCount}${agent.model ? ` | ${agent.model}` : ""}`);
 	lines.push(` ${agent.task}`);
 	lines.push("");
@@ -211,7 +215,6 @@ function agentStatusText(): string {
 
 function setStatusBarWidget() {
 	if (!latestCtx?.hasUI) return;
-	const dim = (s: string) => `\x1b[2m${s}\x1b[22m`;
 	latestCtx.ui.setWidget("agent-status-bar", (_tui, _theme) => ({
 		render(width: number): string[] {
 			const border = dim("─".repeat(width));
@@ -498,11 +501,7 @@ function formatAgentResult(result: AgentResult, maxOutput: number = 8000) {
 	if (result.status === "error") {
 		const errorText = `Agent ${result.id} failed (${formatElapsed(result.elapsed)}, ${result.toolCount} tools): ${result.error}`;
 		const body = truncated ? `\n\n${truncated}` : "";
-		return {
-			content: [{ type: "text" as const, text: errorText + body }],
-			details: { agentId: result.id, status: "error", elapsed: result.elapsed, toolCount: result.toolCount },
-			isError: true,
-		};
+		throw new Error(errorText + body);
 	}
 	return {
 		content: [{ type: "text" as const, text: `Agent ${result.id} completed in ${formatElapsed(result.elapsed)} (${result.toolCount} tool calls)\n\n${truncated}` }],
