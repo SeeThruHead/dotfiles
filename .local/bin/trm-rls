@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DRY_RUN=false
+YES=false
 
 usage() {
   cat <<EOF
@@ -10,17 +11,103 @@ trm-rls — Topstep release manager
 Usage:
   trm-rls cut              Auto-increment version, create release branch, tag staging, create GH release
   trm-rls retag            Delete staging tag/release, retag branch at HEAD, recreate GH release
-  trm-rls promote          Tag current release branch as prod, create GH release
+  trm-rls promote          Tag current release branch as prod, create draft GH release
+  trm-rls publish          Publish the draft prod release
   trm-rls status           Show current release branch and tags
   trm-rls --help           Show this help
 
 Options:
   --dry-run                Show what would happen without making any changes
+  --yes, -y                Skip confirmation prompts
 
 EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
+
+JIRA_BASE="https://topsteptrader.atlassian.net/browse"
+CD_WORKFLOW="0. TRM Continuous Delivery"
+
+# Show CD pipeline status for a given tag
+show_cd_status() {
+  local tag="$1"
+  local run_json
+  run_json=$(gh run list --workflow "$CD_WORKFLOW" --branch "$tag" --limit 1 --json databaseId,status,conclusion,url 2>/dev/null || true)
+
+  local run_id
+  run_id=$(echo "$run_json" | jq -r '.[0].databaseId // empty' 2>/dev/null || true)
+  [[ -z "$run_id" ]] && return
+
+  local run_status run_conclusion run_url
+  run_status=$(echo "$run_json" | jq -r '.[0].status')
+  run_conclusion=$(echo "$run_json" | jq -r '.[0].conclusion // empty')
+  run_url=$(echo "$run_json" | jq -r '.[0].url')
+
+  # Summary line
+  local summary="  CD: ${run_status}"
+  [[ -n "$run_conclusion" ]] && summary="${summary} (${run_conclusion})"
+  echo "${summary}"
+  echo "  ${run_url}"
+
+  # Show job details: in_progress, failed, or queued jobs
+  local jobs
+  jobs=$(gh run view "$run_id" --json jobs --jq '.jobs[] | select(.status != "completed" or .conclusion == "failure") | "    \(if .conclusion == "failure" then "✗" elif .status == "in_progress" then "▶" else "⏳" end) \(.name) — \(.status)\(if .conclusion and .conclusion != "" then " (\(.conclusion))" else "" end)"' 2>/dev/null || true)
+
+  if [[ -n "$jobs" ]]; then
+    echo "$jobs"
+  else
+    # All completed — show final count
+    local total
+    total=$(gh run view "$run_id" --json jobs --jq '.jobs | length' 2>/dev/null || true)
+    echo "    ✓ All ${total} jobs completed"
+  fi
+}
+
+# Format GitHub release notes into Slack-ready output
+# Input: version tag, reads release body from gh
+# Output: Slack-pasteable format with Jira links
+format_slack_notes() {
+  local tag="$1"
+  local body
+  body=$(gh release view "$tag" --json body --jq '.body')
+
+  # Strip -staging suffix for display
+  local display_ver="${tag%-staging}"
+
+  echo ":white_check_mark: TRM RELEASE ${display_ver}"
+  echo ""
+
+  # Parse each PR line: "* Title by @user in https://..."
+  echo "$body" | grep '^\*' | while IFS= read -r line; do
+    # Extract title: everything between "* " and " by @"
+    local title
+    title=$(echo "$line" | sed 's/^\* //' | sed 's/ by @.*//')
+
+    # Extract Jira ticket ID (e.g., CRYS-199, MER-53, PAYM-222)
+    local ticket
+    ticket=$(echo "$title" | grep -oE '[A-Z]+-[0-9]+' | head -1)
+
+    # Clean up title: remove the ticket prefix if it starts with one
+    local clean_title
+    clean_title=$(echo "$title" | sed -E 's/^[A-Z]+-[0-9]+ [-:] *//' | sed -E 's/^[A-Z]+-[0-9]+ //')
+
+    if [[ -n "$ticket" ]]; then
+      echo "$clean_title"
+      echo "${JIRA_BASE}/${ticket}"
+    else
+      echo "$clean_title"
+    fi
+    echo ""
+  done
+}
+
+# Prompt for confirmation, auto-yes if --yes
+confirm() {
+  if $YES; then return 0; fi
+  local prompt="$1"
+  read -r -p "$prompt [y/N] " answer
+  [[ "$answer" =~ ^[Yy]$ ]]
+}
 
 # Run a command, or print it if dry run
 run() {
@@ -87,8 +174,7 @@ cmd_cut() {
   local staging_tag="${next}-staging"
 
   echo ""
-  read -r -p "Cut $branch from main and tag $staging_tag? [y/N] " confirm
-  [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+  confirm "Cut $branch from main and tag $staging_tag?" || { echo "Aborted."; exit 0; }
 
   echo ""
   echo "Creating branch $branch from origin/main..."
@@ -107,6 +193,8 @@ cmd_cut() {
   echo "✓ Tag: $staging_tag"
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
+    echo ""
+    format_slack_notes "$staging_tag"
   fi
 }
 
@@ -131,8 +219,7 @@ cmd_retag() {
     die "no staging release found for $staging_tag"
   fi
 
-  read -r -p "Delete and recreate $staging_tag at current $branch HEAD? [y/N] " confirm
-  [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+  confirm "Delete and recreate $staging_tag at current $branch HEAD?" || { echo "Aborted."; exit 0; }
 
   echo ""
   echo "Deleting release $staging_tag..."
@@ -157,6 +244,8 @@ cmd_retag() {
   echo "✓ Retagged $staging_tag at $(git rev-parse --short HEAD)"
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
+    echo ""
+    format_slack_notes "$staging_tag"
   fi
 }
 
@@ -183,8 +272,24 @@ cmd_promote() {
     die "prod release $prod_tag already exists"
   fi
 
-  read -r -p "Tag $branch as $prod_tag (production)? [y/N] " confirm
-  [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+  # Check release branch HEAD matches staging tag
+  local branch_sha staging_sha
+  branch_sha=$(git rev-parse "origin/$branch")
+  staging_sha=$(git rev-parse "$staging_tag" 2>/dev/null || die "staging tag $staging_tag not found")
+
+  if [[ "$branch_sha" != "$staging_sha" ]]; then
+    echo "⚠ Release branch has diverged from staging tag!"
+    echo ""
+    echo "  $staging_tag:  ${staging_sha:0:10}"
+    echo "  origin/$branch: ${branch_sha:0:10}"
+    echo ""
+    echo "Diff between staging tag and branch:"
+    git log --oneline "$staging_sha...$branch_sha"
+    echo ""
+    die "retag staging first (trm-rls retag) before promoting"
+  fi
+
+  confirm "Tag $branch as $prod_tag (production)?" || { echo "Aborted."; exit 0; }
 
   # Make sure we're on the release branch and up to date
   run git checkout "$branch"
@@ -204,10 +309,54 @@ cmd_promote() {
     --target "$branch" \
     --title "$prod_tag" \
     --generate-notes \
-    --notes-start-tag "$prev_prod"
+    --notes-start-tag "$prev_prod" \
+    --draft
 
   echo ""
-  echo "✓ Tag: $prod_tag"
+  echo "✓ Tag: $prod_tag (draft)"
+  if ! $DRY_RUN; then
+    echo "✓ Release: $(gh browse --no-browser)/releases/tag/$prod_tag"
+    echo ""
+    echo "Run 'trm-rls publish' to publish the release when ready."
+    echo ""
+    format_slack_notes "$prod_tag"
+  fi
+}
+
+cmd_publish() {
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+  git fetch origin --tags --quiet
+
+  local branch
+  branch=$(current_release_branch)
+  [[ -n "$branch" ]] || die "no release branch found"
+
+  local version
+  version=$(version_from_branch "$branch")
+  local prod_tag="$version"
+
+  # Check the release exists and is a draft
+  local is_draft
+  is_draft=$(gh release view "$prod_tag" --json isDraft --jq '.isDraft' 2>/dev/null || true)
+
+  if [[ -z "$is_draft" ]]; then
+    die "no release found for $prod_tag"
+  fi
+
+  if [[ "$is_draft" != "true" ]]; then
+    die "$prod_tag is already published"
+  fi
+
+  echo "Draft release: $prod_tag"
+  echo ""
+
+  confirm "Publish $prod_tag?" || { echo "Aborted."; exit 0; }
+
+  echo ""
+  run gh release edit "$prod_tag" --draft=false
+
+  echo ""
+  echo "✓ Published $prod_tag"
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$prod_tag"
   fi
@@ -230,14 +379,17 @@ cmd_status() {
 
     if gh release view "${version}-staging" >/dev/null 2>&1; then
       echo "Staging: ${version}-staging ✓"
-      gh release view "${version}-staging" --json publishedAt,targetCommitish --jq '"  Published: \(.publishedAt)\n  Target: \(.targetCommitish)"'
+      gh release view "${version}-staging" --json publishedAt,targetCommitish --jq '"  Published: \(.publishedAt)\n  Target branch: \(.targetCommitish)"'
+      local staging_cd
+      show_cd_status "${version}-staging"
     else
       echo "Staging: none"
     fi
 
     if gh release view "$version" >/dev/null 2>&1; then
       echo "Prod: $version ✓"
-      gh release view "$version" --json publishedAt,targetCommitish --jq '"  Published: \(.publishedAt)\n  Target: \(.targetCommitish)"'
+      gh release view "$version" --json publishedAt,targetCommitish --jq '"  Published: \(.publishedAt)\n  Target branch: \(.targetCommitish)"'
+      show_cd_status "$version"
     else
       echo "Prod: none"
     fi
@@ -253,6 +405,7 @@ args=()
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
+    --yes|-y) YES=true ;;
     *) args+=("$arg") ;;
   esac
 done
@@ -266,6 +419,7 @@ case "${args[0]:-}" in
   cut)     cmd_cut ;;
   retag)   cmd_retag ;;
   promote) cmd_promote ;;
+  publish) cmd_publish ;;
   status)  cmd_status ;;
   --help|-h|"") usage ;;
   *) die "unknown command: ${args[0]}. Run trm-rls --help" ;;
