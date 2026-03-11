@@ -242,7 +242,7 @@ cmd_cut() {
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
     verify_notes "$staging_tag" "$latest"
     echo ""
-    format_slack_notes "$staging_tag"
+    gh release view "$staging_tag" --json body --jq '.body' | tr -d '\r' | glow -
   fi
 }
 
@@ -294,7 +294,7 @@ cmd_retag() {
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
     verify_notes "$staging_tag" "$prev_prod"
     echo ""
-    format_slack_notes "$staging_tag"
+    gh release view "$staging_tag" --json body --jq '.body' | tr -d '\r' | glow -
   fi
 }
 
@@ -373,9 +373,9 @@ cmd_promote() {
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$prod_tag"
     verify_notes "$prod_tag" "$prev_prod"
     echo ""
-    echo "Run 'trm-rls publish' to publish the release when ready."
+    gh release view "$prod_tag" --json body --jq '.body' | tr -d '\r' | glow -
     echo ""
-    format_slack_notes "$prod_tag"
+    echo "Run 'trm-rls publish' to publish the release when ready."
   fi
 }
 
@@ -415,6 +415,8 @@ cmd_publish() {
   echo "✓ Published $prod_tag"
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$prod_tag"
+    echo ""
+    format_slack_notes "$prod_tag"
   fi
 }
 
