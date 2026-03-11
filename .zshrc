@@ -57,6 +57,18 @@ fi
 # zoxide (smart cd)
 eval "$(zoxide init zsh)"
 
+# tmux rct — fuzzy find and attach to a tmux session
+tmux() {
+  if [[ "$1" == "rct" ]]; then
+    local session
+    session=$(~/.local/bin/tmux-recent)
+    [[ -n "$session" ]] && command tmux switch-client -t "$session" 2>/dev/null || command tmux attach -t "$session"
+  else
+    command tmux "$@"
+  fi
+}
+compdef tmux=tmux
+
 if command -v wt >/dev/null 2>&1; then
   eval "$(command wt config shell init zsh)"
   # Save the shell-integration wt function, wrap with custom subcommands
@@ -70,4 +82,5 @@ if command -v wt >/dev/null 2>&1; then
       _wt_inner "$@"
     fi
   }
+  compdef wt=wt
 fi
