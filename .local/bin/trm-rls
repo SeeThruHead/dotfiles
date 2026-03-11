@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DRY_RUN=false
+
+usage() {
+  cat <<EOF
+trm-rls — Topstep release manager
+
+Usage:
+  trm-rls cut              Auto-increment version, create release branch, tag staging, create GH release
+  trm-rls retag            Delete staging tag/release, retag branch at HEAD, recreate GH release
+  trm-rls promote          Tag current release branch as prod, create GH release
+  trm-rls status           Show current release branch and tags
+  trm-rls --help           Show this help
+
+Options:
+  --dry-run                Show what would happen without making any changes
+
+EOF
+}
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# Run a command, or print it if dry run
+run() {
+  if $DRY_RUN; then
+    echo "  [dry-run] $*"
+  else
+    "$@"
+  fi
+}
+
+# Get latest vX.Y.Z tag (ignoring -staging), return "none" if no tags exist
+get_latest_version() {
+  gh release list --limit 100 --json tagName --jq '.[].tagName' 2>/dev/null \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -V \
+    | tail -1 \
+    || echo "none"
+}
+
+# Bump patch: v0.5.82 -> v0.5.83
+bump_patch() {
+  local ver="$1"
+  local major minor patch
+  major=$(echo "$ver" | sed 's/^v//' | cut -d. -f1)
+  minor=$(echo "$ver" | sed 's/^v//' | cut -d. -f2)
+  patch=$(echo "$ver" | sed 's/^v//' | cut -d. -f3)
+  echo "v${major}.${minor}.$((patch + 1))"
+}
+
+# Find the current release branch (most recent release/* branch)
+current_release_branch() {
+  git branch -r --sort=-committerdate --list 'origin/release/v*' 2>/dev/null \
+    | head -1 \
+    | sed 's|^ *origin/||' \
+    || echo ""
+}
+
+# Extract version from branch name: release/v0.5.82 -> v0.5.82
+version_from_branch() {
+  echo "$1" | sed 's|^release/||'
+}
+
+cmd_cut() {
+  # Make sure we're in a git repo
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+
+  # Fetch latest
+  git fetch origin --tags --quiet
+
+  local latest
+  latest=$(get_latest_version)
+
+  local next
+  if [[ "$latest" == "none" ]]; then
+    next="v0.0.1"
+    echo "No existing releases found. Starting at $next"
+  else
+    next=$(bump_patch "$latest")
+    echo "Latest prod release: $latest"
+    echo "Next version: $next"
+  fi
+
+  local branch="release/$next"
+  local staging_tag="${next}-staging"
+
+  echo ""
+  read -r -p "Cut $branch from main and tag $staging_tag? [y/N] " confirm
+  [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+
+  echo ""
+  echo "Creating branch $branch from origin/main..."
+  run git checkout -b "$branch" origin/main
+  run git push -u origin "$branch"
+
+  echo "Creating release $staging_tag..."
+  run gh release create "$staging_tag" \
+    --target "$branch" \
+    --title "$staging_tag" \
+    --generate-notes \
+    --notes-start-tag "$latest"
+
+  echo ""
+  echo "✓ Branch: $branch"
+  echo "✓ Tag: $staging_tag"
+  if ! $DRY_RUN; then
+    echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
+  fi
+}
+
+cmd_retag() {
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+  git fetch origin --tags --quiet
+
+  local branch
+  branch=$(current_release_branch)
+  [[ -n "$branch" ]] || die "no release branch found"
+
+  local version
+  version=$(version_from_branch "$branch")
+  local staging_tag="${version}-staging"
+
+  echo "Release branch: $branch"
+  echo "Staging tag: $staging_tag"
+  echo ""
+
+  # Check staging release exists
+  if ! gh release view "$staging_tag" >/dev/null 2>&1; then
+    die "no staging release found for $staging_tag"
+  fi
+
+  read -r -p "Delete and recreate $staging_tag at current $branch HEAD? [y/N] " confirm
+  [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+
+  echo ""
+  echo "Deleting release $staging_tag..."
+  run gh release delete "$staging_tag" --yes --cleanup-tag
+
+  # Make sure we're on the release branch and up to date
+  run git checkout "$branch"
+  run git pull origin "$branch" --quiet
+
+  # Find previous prod tag for notes baseline
+  local prev_prod
+  prev_prod=$(get_latest_version)
+
+  echo "Recreating release $staging_tag (notes from $prev_prod)..."
+  run gh release create "$staging_tag" \
+    --target "$branch" \
+    --title "$staging_tag" \
+    --generate-notes \
+    --notes-start-tag "$prev_prod"
+
+  echo ""
+  echo "✓ Retagged $staging_tag at $(git rev-parse --short HEAD)"
+  if ! $DRY_RUN; then
+    echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
+  fi
+}
+
+cmd_promote() {
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+  git fetch origin --tags --quiet
+
+  local branch
+  branch=$(current_release_branch)
+  [[ -n "$branch" ]] || die "no release branch found"
+
+  local version
+  version=$(version_from_branch "$branch")
+  local staging_tag="${version}-staging"
+  local prod_tag="$version"
+
+  echo "Release branch: $branch"
+  echo "Staging tag: $staging_tag"
+  echo "Prod tag: $prod_tag"
+  echo ""
+
+  # Check prod tag doesn't already exist
+  if gh release view "$prod_tag" >/dev/null 2>&1; then
+    die "prod release $prod_tag already exists"
+  fi
+
+  read -r -p "Tag $branch as $prod_tag (production)? [y/N] " confirm
+  [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+
+  # Make sure we're on the release branch and up to date
+  run git checkout "$branch"
+  run git pull origin "$branch" --quiet
+
+  # Find previous prod tag for notes baseline
+  local prev_prod
+  prev_prod=$(get_latest_version)
+  # If the latest prod IS this version (shouldn't happen, but guard), fall back
+  if [[ "$prev_prod" == "$version" ]]; then
+    die "prod release $version already exists"
+  fi
+
+  echo ""
+  echo "Creating production release $prod_tag (notes from $prev_prod)..."
+  run gh release create "$prod_tag" \
+    --target "$branch" \
+    --title "$prod_tag" \
+    --generate-notes \
+    --notes-start-tag "$prev_prod"
+
+  echo ""
+  echo "✓ Tag: $prod_tag"
+  if ! $DRY_RUN; then
+    echo "✓ Release: $(gh browse --no-browser)/releases/tag/$prod_tag"
+  fi
+}
+
+cmd_status() {
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+  git fetch origin --tags --quiet
+
+  local branch
+  branch=$(current_release_branch)
+
+  if [[ -z "$branch" ]]; then
+    echo "No release branch found."
+  else
+    local version
+    version=$(version_from_branch "$branch")
+    echo "Release branch: $branch"
+    echo ""
+
+    if gh release view "${version}-staging" >/dev/null 2>&1; then
+      echo "Staging: ${version}-staging ✓"
+      gh release view "${version}-staging" --json publishedAt,targetCommitish --jq '"  Published: \(.publishedAt)\n  Target: \(.targetCommitish)"'
+    else
+      echo "Staging: none"
+    fi
+
+    if gh release view "$version" >/dev/null 2>&1; then
+      echo "Prod: $version ✓"
+      gh release view "$version" --json publishedAt,targetCommitish --jq '"  Published: \(.publishedAt)\n  Target: \(.targetCommitish)"'
+    else
+      echo "Prod: none"
+    fi
+  fi
+
+  echo ""
+  echo "Latest prod releases:"
+  gh release list --limit 5 --json tagName,publishedAt --jq '.[] | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | "  \(.tagName)  \(.publishedAt)"' 2>/dev/null || echo "  (none)"
+}
+
+# Parse --dry-run from any position
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    *) args+=("$arg") ;;
+  esac
+done
+
+if $DRY_RUN; then
+  echo "=== DRY RUN MODE — no changes will be made ==="
+  echo ""
+fi
+
+case "${args[0]:-}" in
+  cut)     cmd_cut ;;
+  retag)   cmd_retag ;;
+  promote) cmd_promote ;;
+  status)  cmd_status ;;
+  --help|-h|"") usage ;;
+  *) die "unknown command: ${args[0]}. Run trm-rls --help" ;;
+esac
