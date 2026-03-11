@@ -13,6 +13,7 @@ Usage:
   trm-rls retag            Delete staging tag/release, retag branch at HEAD, recreate GH release
   trm-rls promote          Tag current release branch as prod, create draft GH release
   trm-rls publish          Publish the draft prod release
+  trm-rls msg [tag]        Show Slack-formatted release message (defaults to latest prod)
   trm-rls status           Show current release branch and tags
   trm-rls --help           Show this help
 
@@ -24,6 +25,7 @@ EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
+warn() { echo "⚠ $*"; }
 
 JIRA_BASE="https://topsteptrader.atlassian.net/browse"
 CD_WORKFLOW="0. TRM Continuous Delivery"
@@ -69,36 +71,40 @@ show_cd_status() {
 format_slack_notes() {
   local tag="$1"
   local body
-  body=$(gh release view "$tag" --json body --jq '.body')
+  body=$(gh release view "$tag" --json body --jq '.body' | tr -d '\r')
 
   # Strip -staging suffix for display
   local display_ver="${tag%-staging}"
 
-  echo ":white_check_mark: TRM RELEASE ${display_ver}"
-  echo ""
+  echo ":white_check_mark: TRM ${display_ver}"
+  echo '```'
+
+  local first=true
 
   # Parse each PR line: "* Title by @user in https://..."
-  echo "$body" | grep '^\*' | while IFS= read -r line; do
-    # Extract title: everything between "* " and " by @"
+  echo "$body" | grep '^\* ' | while IFS= read -r line; do
     local title
     title=$(echo "$line" | sed 's/^\* //' | sed 's/ by @.*//')
 
-    # Extract Jira ticket ID (e.g., CRYS-199, MER-53, PAYM-222)
     local ticket
-    ticket=$(echo "$title" | grep -oE '[A-Z]+-[0-9]+' | head -1)
+    ticket=$(echo "$title" | grep -oE '[A-Z]+-[0-9]+' | head -1 || true)
 
-    # Clean up title: remove the ticket prefix if it starts with one
+    # Skip items without a Jira ticket
+    [[ -n "$ticket" ]] || continue
+
     local clean_title
     clean_title=$(echo "$title" | sed -E 's/^[A-Z]+-[0-9]+ [-:] *//' | sed -E 's/^[A-Z]+-[0-9]+ //')
 
-    if [[ -n "$ticket" ]]; then
-      echo "$clean_title"
-      echo "${JIRA_BASE}/${ticket}"
+    if $first; then
+      first=false
     else
-      echo "$clean_title"
+      echo ""
     fi
-    echo ""
+
+    echo "$clean_title"
+    echo "${JIRA_BASE}/${ticket}"
   done
+  echo '```'
 }
 
 # Prompt for confirmation, auto-yes if --yes
@@ -150,6 +156,47 @@ version_from_branch() {
   echo "$1" | sed 's|^release/||'
 }
 
+# Verify release notes contain all PRs between two tags
+# Usage: verify_notes <release_tag> <since_tag>
+verify_notes() {
+  local release_tag="$1"
+  local since_tag="$2"
+
+  # Get PR numbers from commits
+  local expected_prs
+  expected_prs=$(git log --oneline "$since_tag..origin/$(current_release_branch)" \
+    | grep -oE '#[0-9]+' | sort -u)
+
+  if [[ -z "$expected_prs" ]]; then
+    return 0
+  fi
+
+  # Get release notes body
+  local body
+  body=$(gh release view "$release_tag" --json body --jq '.body' 2>/dev/null || true)
+
+  local missing=()
+  while IFS= read -r pr; do
+    if ! echo "$body" | grep -q "$pr"; then
+      missing+=("$pr")
+    fi
+  done <<< "$expected_prs"
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo ""
+    warn "Release notes are missing ${#missing[@]} PR(s):"
+    for pr in "${missing[@]}"; do
+      local title
+      title=$(git log --oneline "$since_tag..origin/$(current_release_branch)" | grep "$pr" | head -1)
+      echo "  $title"
+    done
+    echo ""
+    warn "Notes may need to be regenerated. Check --notes-start-tag baseline."
+  else
+    echo "✓ Release notes include all ${#expected_prs[@]} PR(s)"
+  fi
+}
+
 cmd_cut() {
   # Make sure we're in a git repo
   git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
@@ -193,6 +240,7 @@ cmd_cut() {
   echo "✓ Tag: $staging_tag"
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
+    verify_notes "$staging_tag" "$latest"
     echo ""
     format_slack_notes "$staging_tag"
   fi
@@ -244,6 +292,7 @@ cmd_retag() {
   echo "✓ Retagged $staging_tag at $(git rev-parse --short HEAD)"
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$staging_tag"
+    verify_notes "$staging_tag" "$prev_prod"
     echo ""
     format_slack_notes "$staging_tag"
   fi
@@ -267,9 +316,15 @@ cmd_promote() {
   echo "Prod tag: $prod_tag"
   echo ""
 
-  # Check prod tag doesn't already exist
+  # Check prod tag already exists — offer to re-promote
   if gh release view "$prod_tag" >/dev/null 2>&1; then
-    die "prod release $prod_tag already exists"
+    warn "Prod release $prod_tag already exists."
+    echo ""
+    confirm "Delete $prod_tag and re-promote?" || { echo "Aborted."; exit 0; }
+    echo ""
+    echo "Deleting release $prod_tag..."
+    run gh release delete "$prod_tag" --yes --cleanup-tag
+    echo ""
   fi
 
   # Check release branch HEAD matches staging tag
@@ -316,6 +371,7 @@ cmd_promote() {
   echo "✓ Tag: $prod_tag (draft)"
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$prod_tag"
+    verify_notes "$prod_tag" "$prev_prod"
     echo ""
     echo "Run 'trm-rls publish' to publish the release when ready."
     echo ""
@@ -360,6 +416,24 @@ cmd_publish() {
   if ! $DRY_RUN; then
     echo "✓ Release: $(gh browse --no-browser)/releases/tag/$prod_tag"
   fi
+}
+
+cmd_msg() {
+  git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+  git fetch origin --tags --quiet
+
+  local tag="${args[1]:-}"
+
+  if [[ -z "$tag" ]]; then
+    tag=$(get_latest_version)
+    [[ "$tag" != "none" ]] || die "no prod releases found"
+  fi
+
+  if ! gh release view "$tag" >/dev/null 2>&1; then
+    die "no release found for $tag"
+  fi
+
+  format_slack_notes "$tag"
 }
 
 cmd_status() {
@@ -420,6 +494,7 @@ case "${args[0]:-}" in
   retag)   cmd_retag ;;
   promote) cmd_promote ;;
   publish) cmd_publish ;;
+  msg)     cmd_msg ;;
   status)  cmd_status ;;
   --help|-h|"") usage ;;
   *) die "unknown command: ${args[0]}. Run trm-rls --help" ;;
