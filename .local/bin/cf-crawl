@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BASE="https://api.cloudflare.com/client/v4/accounts"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+[[ -f "$HOME/.config/cf-crawl/env" ]] && source "$HOME/.config/cf-crawl/env"
+
+for arg in "$@"; do
+  case "$arg" in -h|--help) ;; *) continue ;; esac
+  cat <<'EOF'
+Usage: cf-crawl <url> [options]
+
+Crawl websites using Cloudflare Browser Rendering /crawl API.
+
+Options:
+  --format <html|markdown|json>   Output format (default: markdown)
+  --limit <n>                     Max pages (default: 10, max: 100000)
+  --depth <n>                     Max link depth (default: 100000)
+  --render / --no-render          Headless browser JS execution (default: true)
+  --include <pattern>             Include URL pattern (repeatable)
+  --exclude <pattern>             Exclude URL pattern (repeatable)
+  --external                      Follow external links
+  --subdomains                    Follow subdomain links
+  --source <all|sitemaps|links>   URL discovery source (default: all)
+  --max-age <seconds>             Cache TTL (default: 86400, max: 604800)
+  --poll <seconds>                Poll interval (default: 5)
+  --timeout <seconds>             Max wait (default: 300)
+  --output <file>                 Write to file instead of stdout
+  --raw                           Output raw JSON response
+  -h, --help                      Show this help
+
+Patterns: * matches any chars except /, ** matches any chars including /
+Config: ~/.config/cf-crawl/env (CF_ACCOUNT_ID, CF_API_TOKEN)
+EOF
+  exit 0
+done
+
+[[ -z "${CF_ACCOUNT_ID:-}" ]] && die "CF_ACCOUNT_ID not set. Add to ~/.config/cf-crawl/env"
+[[ -z "${CF_API_TOKEN:-}" ]] && die "CF_API_TOKEN not set. Add to ~/.config/cf-crawl/env"
+
+FORMAT="markdown"
+LIMIT=10
+DEPTH=100000
+RENDER=true
+SOURCE="all"
+MAX_AGE=86400
+POLL_INTERVAL=5
+TIMEOUT=300
+OUTPUT=""
+RAW=false
+EXTERNAL=false
+SUBDOMAINS=false
+INCLUDE_PATTERNS=()
+EXCLUDE_PATTERNS=()
+URL=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --format) FORMAT="$2"; shift 2 ;;
+    --limit) LIMIT="$2"; shift 2 ;;
+    --depth) DEPTH="$2"; shift 2 ;;
+    --render) RENDER=true; shift ;;
+    --no-render) RENDER=false; shift ;;
+    --include) INCLUDE_PATTERNS+=("$2"); shift 2 ;;
+    --exclude) EXCLUDE_PATTERNS+=("$2"); shift 2 ;;
+    --external) EXTERNAL=true; shift ;;
+    --subdomains) SUBDOMAINS=true; shift ;;
+    --source) SOURCE="$2"; shift 2 ;;
+    --max-age) MAX_AGE="$2"; shift 2 ;;
+    --poll) POLL_INTERVAL="$2"; shift 2 ;;
+    --timeout) TIMEOUT="$2"; shift 2 ;;
+    --output) OUTPUT="$2"; shift 2 ;;
+    --raw) RAW=true; shift ;;
+    -*) die "unknown option: $1" ;;
+    *) [[ -z "$URL" ]] && URL="$1" || die "unexpected arg: $1"; shift ;;
+  esac
+done
+
+[[ -z "$URL" ]] && die "url required"
+
+AUTH="Authorization: Bearer ${CF_API_TOKEN}"
+ENDPOINT="${BASE}/${CF_ACCOUNT_ID}/browser-rendering/crawl"
+
+# Build request body
+build_body() {
+  local body
+  body=$(jq -n \
+    --arg url "$URL" \
+    --argjson limit "$LIMIT" \
+    --argjson depth "$DEPTH" \
+    --arg format "$FORMAT" \
+    --argjson render "$RENDER" \
+    --arg source "$SOURCE" \
+    --argjson maxAge "$MAX_AGE" \
+    --argjson external "$EXTERNAL" \
+    --argjson subdomains "$SUBDOMAINS" \
+    '{url:$url, limit:$limit, depth:$depth, formats:[$format], render:$render, source:$source, maxAge:$maxAge, options:{includeExternalLinks:$external, includeSubdomains:$subdomains}}')
+
+  if [[ ${#INCLUDE_PATTERNS[@]} -gt 0 ]]; then
+    local patterns
+    patterns=$(printf '%s\n' "${INCLUDE_PATTERNS[@]}" | jq -R . | jq -s .)
+    body=$(echo "$body" | jq --argjson p "$patterns" '.options.includePatterns=$p')
+  fi
+
+  if [[ ${#EXCLUDE_PATTERNS[@]} -gt 0 ]]; then
+    local patterns
+    patterns=$(printf '%s\n' "${EXCLUDE_PATTERNS[@]}" | jq -R . | jq -s .)
+    body=$(echo "$body" | jq --argjson p "$patterns" '.options.excludePatterns=$p')
+  fi
+
+  echo "$body"
+}
+
+# Start crawl
+BODY=$(build_body)
+echo "Starting crawl: $URL (limit=$LIMIT, depth=$DEPTH, format=$FORMAT)" >&2
+
+RESPONSE=$(curl -s -X POST "$ENDPOINT" -H "$AUTH" -H "Content-Type: application/json" -d "$BODY")
+
+SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+[[ "$SUCCESS" != "true" ]] && die "$(echo "$RESPONSE" | jq -r '.errors[0].message // "unknown error"')"
+
+JOB_ID=$(echo "$RESPONSE" | jq -r '.result')
+echo "Job started: $JOB_ID" >&2
+
+# Poll for completion
+ELAPSED=0
+while true; do
+  sleep "$POLL_INTERVAL"
+  ELAPSED=$((ELAPSED + POLL_INTERVAL))
+
+  POLL=$(curl -s -X GET "${ENDPOINT}/${JOB_ID}?limit=0" -H "$AUTH")
+  STATUS=$(echo "$POLL" | jq -r '.result.status // "running"')
+  TOTAL=$(echo "$POLL" | jq -r '.result.total // 0')
+  FINISHED=$(echo "$POLL" | jq -r '.result.finished // 0')
+
+  echo "  [$STATUS] ${FINISHED}/${TOTAL} pages (${ELAPSED}s)" >&2
+
+  case "$STATUS" in
+    running) ;;
+    completed) break ;;
+    cancelled_*|errored) die "crawl ended: $STATUS" ;;
+  esac
+
+  if [[ $ELAPSED -ge $TIMEOUT ]]; then
+    curl -s -X DELETE "${ENDPOINT}/${JOB_ID}" -H "$AUTH" >/dev/null
+    die "timed out after ${TIMEOUT}s"
+  fi
+done
+
+# Fetch results with pagination
+echo "Fetching results..." >&2
+
+fetch_results() {
+  local cursor=""
+  while true; do
+    local query=""
+    [[ -n "$cursor" ]] && query="?cursor=${cursor}"
+
+    local result
+    result=$(curl -s -X GET "${ENDPOINT}/${JOB_ID}${query}" -H "$AUTH")
+
+    if [[ "$RAW" == "true" ]]; then
+      echo "$result"
+    else
+      echo "$result" | jq -r '
+        .result.records[]
+        | select(.status == "completed")
+        | "---\n# \(.metadata.title // .url)\nURL: \(.url)\n\n\(.markdown // .html // "(no content)")\n"'
+    fi
+
+    cursor=$(echo "$result" | jq -r '.result.cursor // empty')
+    [[ -z "$cursor" ]] && break
+  done
+}
+
+if [[ -n "$OUTPUT" ]]; then
+  fetch_results > "$OUTPUT"
+  echo "Results written to: $OUTPUT" >&2
+else
+  fetch_results
+fi
+
+echo "Done" >&2
