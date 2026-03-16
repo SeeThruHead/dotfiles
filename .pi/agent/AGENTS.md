@@ -1,5 +1,7 @@
 # Agent Instructions
 
+Be extremely concise. Sacrifice grammar for concision.
+
 ## Rules
 
 - Always ask before running any git commands (commit, push, stash, checkout, rebase, etc.). Never run them without explicit confirmation.
