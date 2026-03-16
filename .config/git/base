@@ -2,7 +2,6 @@
 	fsh = !git fetch origin main && git rebase origin/main
 	pushf = push --force-with-lease
 	rct = !git recent
-	dif = !git -c pager.diff=delta diff
 [delta]
 	navigate = true
 	line-numbers = true
@@ -21,5 +20,5 @@
 	commit-style = "#f0c674" bold
 
 [pager]
-	diff = diffnav --side-by-side
+	diff = delta
 	show = delta

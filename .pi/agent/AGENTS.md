@@ -6,12 +6,18 @@
 - Use `yadm` instead of `git` when working in the dotfiles repo (~/.pi/agent, ~/.config, etc.).
 - Never run `yadm status -u` without a tight path filter — HOME is the worktree, it will hang.
 - Use `tk` for ticket management, never edit .tickets/ files directly.
+- Use `rg` (ripgrep) instead of `grep` for searching files.
+- Don't use `show_widget` unless explicitly asked to visualize something.
 
 ## Tool Discovery
 
 Before starting a task, grep `~/.pi/agent/_agents/cli-tools.md` for relevant keywords to find CLI tools that can help. The file is tag-indexed — search by concept (e.g., `csv`, `review`, `git`, `data`, `docker`). Then run `<tool> --help` to learn its interface.
 
 Example: `grep -i "csv\|parquet\|data" ~/.pi/agent/_agents/cli-tools.md`
+
+## Approach
+
+- For mechanical/bulk tasks (comparing lists, pruning files, renaming, refactoring), write a throwaway script instead of doing it interactively. It's faster and more reliable.
 
 ## Subagents
 
