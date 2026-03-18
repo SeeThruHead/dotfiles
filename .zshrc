@@ -78,6 +78,28 @@ if command -v wt >/dev/null 2>&1; then
       local branch
       branch=$(~/.local/bin/wt-recent)
       [[ -n "$branch" ]] && _wt_inner switch "$branch"
+    elif [[ "$1" == "prune" ]]; then
+      # Remove worktrees whose branches are merged or prunable
+      local branches=()
+      while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        branches+=("$line")
+      done < <(git worktree list | grep 'prunable' | awk '{print $3}' | tr -d '[]')
+      if (( ${#branches[@]} == 0 )); then
+        echo "No prunable worktrees found."
+        return 0
+      fi
+      echo "Prunable worktrees:"
+      printf '  %s\n' "${branches[@]}"
+      if [[ "$2" != "-y" ]]; then
+        echo ""
+        read -q "?Remove these worktrees? [y/N] " || { echo ""; return 0; }
+        echo ""
+      fi
+      for b in "${branches[@]}"; do
+        echo "Removing $b..."
+        _wt_inner remove -f "$b"
+      done
     else
       _wt_inner "$@"
     fi
