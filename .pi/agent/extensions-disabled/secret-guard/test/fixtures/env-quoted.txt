@@ -1,5 +1,0 @@
-SECRET_KEY="sk-proj-abcdefghijklmnopqrstuvwxyz123456"
-SAFE_PORT="3000"
-DB_PASSWORD='myS3cretP@ssw0rd!!'
-APP_NAME='hello-world'
-TOKEN="ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef12"

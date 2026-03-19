@@ -1,5 +1,0 @@
-export PORT=8080
-export NODE_ENV=production
-export API_KEY=sk-1234567890abcdef1234567890abcdef
-export DATABASE_URL=postgres://user:hunter2@rds.amazonaws.com:5432/prod
-export DEBUG=false

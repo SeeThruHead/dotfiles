@@ -6,6 +6,8 @@ export const REDACTED = "<REDACTED>";
 export const SUPPLEMENTAL_PATTERNS: RegExp[] = [
   // AWS Access Key ID — gitleaks only catches the secret key, not the ID
   /\b((?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16})\b/g,
+  // Connection strings with embedded credentials (postgresql://user:pass@host)
+  /([a-z]+:\/\/[^:@/\s]+:)[^:@/\s]+(@)/g,
 ];
 
 // Key name fragments that always mean the value is secret

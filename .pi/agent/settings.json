@@ -5,6 +5,7 @@
   "defaultThinkingLevel": "medium",
   "theme": "tomorrow-night",
   "packages": [
-    "git:github.com/Michaelliv/pi-generative-ui"
+    "git:github.com/Michaelliv/pi-generative-ui",
+    "npm:pi-subagents"
   ]
 }
