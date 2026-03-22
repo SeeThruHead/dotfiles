@@ -1,51 +1,36 @@
--- lua/user/plugins/tokyonight.lua
 return {
-  "folke/tokyonight.nvim",
-  opts = {
-    style = "night",
-    transparent = true, -- Enable transparency
-    terminal_colors = true,
-    styles = {
-      sidebars = "transparent", -- Make sidebars transparent too
-      floats = "transparent", -- Make floats transparent
-      comments = { italic = true },
-      keywords = { italic = true },
+  {
+    "folke/tokyonight.nvim",
+    lazy = false,
+    priority = 1000,
+    opts = {
+      style = "night",
+      transparent = true,
+      terminal_colors = true,
+      styles = {
+        sidebars = "transparent",
+        floats = "transparent",
+        comments = { italic = true },
+        keywords = { italic = true },
+      },
+      on_colors = function(colors)
+        colors.border = "#444444"
+      end,
+      on_highlights = function(hl, c)
+        hl.Normal = { bg = "NONE", fg = c.fg }
+        hl.NormalSB = { bg = "NONE", fg = c.fg }
+        hl.NormalFloat = { bg = "NONE", fg = c.fg }
+        hl.NeoTreeNormal = { bg = "NONE", fg = c.fg }
+        hl.NeoTreeNormalNC = { bg = "NONE", fg = c.fg }
+        hl.WinSeparator = { fg = c.border }
+        hl.FloatBorder = { bg = "NONE", fg = c.border }
+        hl.StatusLine = { bg = "NONE", fg = c.fg }
+        hl.StatusLineNC = { bg = "NONE", fg = c.comment }
+      end,
     },
-
-    on_colors = function(colors)
-      -- Make separator lines visible against transparent background
-      colors.border = "#444444" -- Gray separator lines
-      colors.border_highlight = "#555555"
-    end,
-
-    on_highlights = function(highlights, colors)
-      -- Ensure all backgrounds are transparent
-      highlights.Normal = { bg = "NONE", fg = colors.fg }
-      highlights.NormalSB = { bg = "NONE", fg = colors.fg } -- Sidebars
-      highlights.NormalFloat = { bg = "NONE", fg = colors.fg } -- Floats
-
-      -- NeoTree specific
-      highlights.NeoTreeNormal = { bg = "NONE", fg = colors.fg }
-      highlights.NeoTreeNormalNC = { bg = "NONE", fg = colors.fg }
-
-      -- Terminal
-      highlights.TerminalNormal = { bg = "NONE" }
-
-      -- Keep separator lines visible
-      highlights.WinSeparator = { fg = colors.border }
-      highlights.VertSplit = { fg = colors.border }
-      highlights.NeoTreeWinSeparator = { fg = colors.border }
-
-      -- Status lines transparent
-      highlights.StatusLine = { bg = "NONE", fg = colors.fg }
-      highlights.StatusLineNC = { bg = "NONE", fg = colors.comment }
-
-      -- Float borders (you might want these slightly opaque for visibility)
-      highlights.FloatBorder = { bg = "NONE", fg = colors.border }
-
-      -- Optional: Make some UI elements slightly opaque for better readability
-      -- highlights.Pmenu = { bg = colors.bg_popup } -- Popup menus
-      -- highlights.PmenuSel = { bg = colors.bg_visual } -- Selected popup item
-    end,
+  },
+  {
+    "LazyVim/LazyVim",
+    opts = { colorscheme = "tokyonight" },
   },
 }
