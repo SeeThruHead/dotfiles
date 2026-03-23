@@ -44,8 +44,22 @@ function redactByKeyName(text: string): string {
  * NOTE: do NOT pass --redact — it wipes the Secret field in the JSON output,
  * making it impossible to know what to replace.
  */
+const GITLEAKS_TIMEOUT_MS = 5000;
+
 export async function detectSecrets(text: string): Promise<string[] | null> {
   return new Promise((resolve) => {
+    let settled = false;
+    const done = (val: string[] | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+
+    const timer = setTimeout(() => {
+      proc.kill();
+      done(null);
+    }, GITLEAKS_TIMEOUT_MS);
+
     const proc = spawn(
       "gitleaks",
       ["stdin", "--no-banner", "--log-level", "error", "-f", "json", "-r", "-"],
@@ -55,11 +69,12 @@ export async function detectSecrets(text: string): Promise<string[] | null> {
     const stdout: Buffer[] = [];
     proc.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
 
-    proc.on("error", () => resolve(null));
+    proc.on("error", () => { clearTimeout(timer); done(null); });
 
     proc.on("close", (code) => {
-      if (code === 0) return resolve(null);
-      if (code !== 1) return resolve(null);
+      clearTimeout(timer);
+      if (code === 0) return done(null);
+      if (code !== 1) return done(null);
 
       try {
         const findings: Array<{ Secret?: string }> = JSON.parse(
@@ -68,14 +83,19 @@ export async function detectSecrets(text: string): Promise<string[] | null> {
         const secrets = findings
           .map((f) => f.Secret)
           .filter((s): s is string => typeof s === "string" && s.length > 0);
-        resolve(secrets.length > 0 ? secrets : null);
+        done(secrets.length > 0 ? secrets : null);
       } catch {
-        resolve(null);
+        done(null);
       }
     });
 
-    proc.stdin.write(text, "utf-8");
-    proc.stdin.end();
+    try {
+      proc.stdin.write(text, "utf-8");
+      proc.stdin.end();
+    } catch {
+      clearTimeout(timer);
+      done(null);
+    }
   });
 }
 

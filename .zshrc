@@ -106,3 +106,5 @@ if command -v wt >/dev/null 2>&1; then
   }
   compdef wt=wt
 fi
+
+export PATH="/opt/homebrew/opt/libpq/bin:$PATH" # added by trm bootstrap (libpq)
