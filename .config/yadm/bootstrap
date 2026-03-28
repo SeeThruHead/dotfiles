@@ -1,22 +1,14 @@
 #!/bin/bash
-# yadm bootstrap — run after `yadm clone` or `yadm pull` on any machine
-# Installs/updates npm dependencies for pi extensions that have a package.json
-
+# yadm bootstrap — runs ansible playbook for full workstation setup
 set -euo pipefail
 
-echo "==> yadm bootstrap"
+PLAYBOOK="$(dirname "$0")/bootstrap.yml"
 
-# Install/update npm deps for pi extensions
-for pkg in ~/.pi/agent/extensions/*/package.json; do
-  dir="$(dirname "$pkg")"
-  name="$(basename "$dir")"
-  if [ ! -d "$dir/node_modules" ]; then
-    echo "  Installing deps for extension: $name"
-    (cd "$dir" && npm install --no-fund --no-audit)
-  else
-    echo "  Updating deps for extension: $name"
-    (cd "$dir" && npm install --no-fund --no-audit 2>&1 | grep -v "up to date" || true)
-  fi
-done
+if ! command -v ansible-playbook &>/dev/null; then
+  echo "==> Installing ansible..."
+  brew install ansible
+fi
 
+echo "==> Running ansible playbook..."
+ansible-playbook "$PLAYBOOK" --diff
 echo "==> Done"

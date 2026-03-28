@@ -1,0 +1,191 @@
+---
+# Ansible playbook for macOS workstation setup
+# Run: ansible-playbook ~/.config/yadm/bootstrap.yml
+- name: macOS workstation setup
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    homebrew_casks:
+      - 1password
+      - amethyst
+      - bettertouchtool
+      - discord
+      - font-source-code-pro
+      - ghostty
+      - karabiner-elements
+      - obs
+      - raycast
+      - signal
+      - slack
+      - stats
+      - superwhisper
+      - tailscale
+      - visual-studio-code
+      - vlc
+
+    macos_defaults:
+      # Dock
+      - { domain: com.apple.dock, key: autohide, type: bool, value: true }
+      - { domain: com.apple.dock, key: tilesize, type: int, value: 51 }
+      - { domain: com.apple.dock, key: show-recents, type: bool, value: false }
+      - { domain: com.apple.dock, key: orientation, type: string, value: left }
+      # Keyboard
+      - { domain: NSGlobalDomain, key: KeyRepeat, type: int, value: 2 }
+      - { domain: NSGlobalDomain, key: InitialKeyRepeat, type: int, value: 15 }
+      - { domain: NSGlobalDomain, key: ApplePressAndHoldEnabled, type: bool, value: false }
+      - { domain: NSGlobalDomain, key: NSAutomaticCapitalizationEnabled, type: bool, value: false }
+      - { domain: NSGlobalDomain, key: NSAutomaticPeriodSubstitutionEnabled, type: bool, value: false }
+      - { domain: NSGlobalDomain, key: NSAutomaticSpellingCorrectionEnabled, type: bool, value: false }
+      - { domain: NSGlobalDomain, key: NSAutomaticQuoteSubstitutionEnabled, type: bool, value: false }
+      - { domain: NSGlobalDomain, key: NSAutomaticDashSubstitutionEnabled, type: bool, value: false }
+      # Finder
+      - { domain: NSGlobalDomain, key: AppleShowAllExtensions, type: bool, value: true }
+      # Mouse
+      - { domain: NSGlobalDomain, key: com.apple.mouse.scaling, type: float, value: 0.875 }
+      # Screenshots
+      - { domain: com.apple.screencapture, key: location, type: string, value: "{{ lookup('env', 'HOME') }}/Screenshots" }
+      # Appearance
+      - { domain: NSGlobalDomain, key: AppleInterfaceStyle, type: string, value: Dark }
+
+    homebrew_taps:
+      - dlvhdr/formulae
+      - restatedev/tap
+      - roborev-dev/tap
+      - seethruhead/tap
+      - wedow/tools
+
+    homebrew_packages:
+      - bash
+      - bat
+      - btop
+      - chafa
+      - cmake
+      - cowsay
+      - dlvhdr/formulae/diffnav
+      - duckdb
+      - eza
+      - fd
+      - fzf
+      - gh
+      - go
+      - grep
+      - gitleaks
+      - gnupg
+      - git-delta
+      - gum
+      - htop
+      - http-server
+      - iperf3
+      - jq
+      - just
+      - logcli
+      - mprocs
+      - neovim
+      - ninja
+      - oxker
+      - pinentry-mac
+      - pipx
+      - ripgrep
+      - rust
+      - spark
+      - speedtest-cli
+      - the_silver_searcher
+      - tldr
+      - tmux
+      - tree
+      - ttyd
+      - wget
+      - yadm
+      - z
+      - zellij
+      - zig
+      - zoxide
+      - zsh-autosuggestions
+
+  tasks:
+    # --- Homebrew ---
+    - name: Tap homebrew repos
+      community.general.homebrew_tap:
+        name: "{{ item }}"
+      loop: "{{ homebrew_taps }}"
+
+    - name: Install homebrew packages
+      community.general.homebrew:
+        name: "{{ homebrew_packages }}"
+        state: present
+
+    # --- Homebrew casks ---
+    - name: Install homebrew casks
+      community.general.homebrew_cask:
+        name: "{{ homebrew_casks }}"
+        state: present
+
+    # --- macOS defaults ---
+    - name: Set macOS defaults
+      community.general.osx_defaults:
+        domain: "{{ item.domain }}"
+        key: "{{ item.key }}"
+        type: "{{ item.type }}"
+        value: "{{ item.value }}"
+      loop: "{{ macos_defaults }}"
+      loop_control:
+        label: "{{ item.domain }} {{ item.key }}"
+
+    - name: Create Screenshots directory
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/Screenshots"
+        state: directory
+
+    - name: Restart Dock
+      ansible.builtin.command: killall Dock
+      changed_when: false
+
+    - name: Restart Finder
+      ansible.builtin.command: killall Finder
+      changed_when: false
+
+    # --- Powerlevel10k ---
+    - name: Clone powerlevel10k
+      ansible.builtin.git:
+        repo: https://github.com/romkatv/powerlevel10k.git
+        dest: "{{ lookup('env', 'HOME') }}/powerlevel10k"
+        depth: 1
+        update: false
+
+    # --- tmux plugin manager ---
+    - name: Clone tpm
+      ansible.builtin.git:
+        repo: https://github.com/tmux-plugins/tpm.git
+        dest: "{{ lookup('env', 'HOME') }}/.config/tmux/plugins/tpm"
+        depth: 1
+        update: false
+
+    - name: Clone tpm (legacy path)
+      ansible.builtin.git:
+        repo: https://github.com/tmux-plugins/tpm.git
+        dest: "{{ lookup('env', 'HOME') }}/.tmux/plugins/tpm"
+        depth: 1
+        update: false
+
+    - name: Install tmux plugins
+      ansible.builtin.shell: "~/.config/tmux/plugins/tpm/bin/install_plugins"
+      args:
+        creates: "{{ lookup('env', 'HOME') }}/.config/tmux/plugins/tmux-sensible"
+
+    # --- Pi extensions ---
+    - name: Find pi extensions with package.json
+      ansible.builtin.find:
+        paths: "{{ lookup('env', 'HOME') }}/.pi/agent/extensions"
+        patterns: "package.json"
+        recurse: true
+        depth: 2
+      register: pi_extensions
+
+    - name: Install pi extension deps
+      community.general.npm:
+        path: "{{ item.path | dirname }}"
+      loop: "{{ pi_extensions.files }}"
+      loop_control:
+        label: "{{ item.path | dirname | basename }}"
