@@ -48,6 +48,10 @@
       - { domain: com.apple.screencapture, key: location, type: string, value: "{{ lookup('env', 'HOME') }}/Screenshots" }
       # Appearance
       - { domain: NSGlobalDomain, key: AppleInterfaceStyle, type: string, value: Dark }
+      # Raycast hotkey
+      - { domain: com.raycast.macos, key: raycastGlobalHotkey, type: string, value: "Command-49" }
+
+
 
     homebrew_taps:
       - dlvhdr/formulae
@@ -132,6 +136,10 @@
       loop: "{{ macos_defaults }}"
       loop_control:
         label: "{{ item.domain }} {{ item.key }}"
+
+    - name: Import keyboard shortcuts (Mission Control, Spotlight, etc)
+      ansible.builtin.shell: defaults import com.apple.symbolichotkeys ~/.config/yadm/symbolichotkeys.plist
+      changed_when: false
 
     - name: Create Screenshots directory
       ansible.builtin.file:
