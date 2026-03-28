@@ -162,6 +162,17 @@
       ansible.builtin.command: killall Finder
       changed_when: false
 
+    # --- yadm pre-commit hook (gitleaks) ---
+    - name: Install gitleaks pre-commit hook for yadm
+      ansible.builtin.copy:
+        dest: "{{ lookup('pipe', 'yadm introspect repo') }}/hooks/pre-commit"
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          if command -v gitleaks &>/dev/null; then
+            gitleaks git --staged --no-banner "$(yadm introspect repo)"
+          fi
+
     # --- Powerlevel10k ---
     - name: Clone powerlevel10k
       ansible.builtin.git:
