@@ -31,6 +31,13 @@
       - { domain: com.apple.dock, key: tilesize, type: int, value: 51 }
       - { domain: com.apple.dock, key: show-recents, type: bool, value: false }
       - { domain: com.apple.dock, key: orientation, type: string, value: left }
+      # Spaces
+      - { domain: com.apple.dock, key: mru-spaces, type: bool, value: false }
+      # Hot corners (top-right: sleep display, bottom-right: quick note)
+      - { domain: com.apple.dock, key: wvous-tr-corner, type: int, value: 10 }
+      - { domain: com.apple.dock, key: wvous-tr-modifier, type: int, value: 0 }
+      - { domain: com.apple.dock, key: wvous-br-corner, type: int, value: 14 }
+      - { domain: com.apple.dock, key: wvous-br-modifier, type: int, value: 0 }
       # Keyboard
       - { domain: NSGlobalDomain, key: KeyRepeat, type: int, value: 2 }
       - { domain: NSGlobalDomain, key: InitialKeyRepeat, type: int, value: 15 }
