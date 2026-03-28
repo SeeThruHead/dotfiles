@@ -18,6 +18,7 @@
       - obs
       - raycast
       - signal
+      - soundsource
       - slack
       - stats
       - superwhisper
@@ -188,6 +189,30 @@
       ansible.builtin.shell: "~/.config/tmux/plugins/tpm/bin/install_plugins"
       args:
         creates: "{{ lookup('env', 'HOME') }}/.config/tmux/plugins/tmux-sensible"
+
+    # --- Licenses ---
+    - name: Deploy BetterTouchTool license
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'HOME') }}/.config/licenses/bettertouchtool.bttlicense"
+        dest: "{{ lookup('env', 'HOME') }}/Library/Application Support/BetterTouchTool/bettertouchtool.bttlicense"
+      ignore_errors: true
+
+    - name: Deploy SoundSource presets
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'HOME') }}/.config/licenses/soundsource-presets.plist"
+        dest: "{{ lookup('env', 'HOME') }}/Library/Application Support/SoundSource/CustomPresets.plist"
+      ignore_errors: true
+
+    - name: Deploy SoundSource sources
+      ansible.builtin.copy:
+        src: "{{ lookup('env', 'HOME') }}/.config/licenses/soundsource-sources.plist"
+        dest: "{{ lookup('env', 'HOME') }}/Library/Application Support/SoundSource/Sources.plist"
+      ignore_errors: true
+
+    - name: Import SoundSource preferences (includes license)
+      ansible.builtin.shell: defaults import com.rogueamoeba.soundsource ~/.config/licenses/soundsource.plist
+      changed_when: false
+      ignore_errors: true
 
     # --- Pi extensions ---
     - name: Find pi extensions with package.json
