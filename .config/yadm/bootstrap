@@ -1,14 +1,92 @@
 #!/bin/bash
-# yadm bootstrap — runs ansible playbook for full workstation setup
+# yadm bootstrap — run after `yadm clone` or `yadm pull` on any machine
+# Installs/updates npm dependencies for pi extensions that have a package.json
+
 set -euo pipefail
 
-PLAYBOOK="$(dirname "$0")/bootstrap.yml"
+echo "==> yadm bootstrap"
 
-if ! command -v ansible-playbook &>/dev/null; then
-  echo "==> Installing ansible..."
-  brew install ansible
+# macOS-specific configuration
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  echo "  Configuring macOS screenshot and screen recording locations..."
+  
+  # Create both directories 
+  mkdir -p "$HOME/screenshots"
+  mkdir -p "$HOME/screen-recordings"
+  
+  # Configure default location for screenshots and screen recordings (Cmd+Shift+3, Cmd+Shift+4, Cmd+Shift+5)
+  # Note: macOS Screenshot app uses the same location setting for both by default
+  defaults write com.apple.screencapture location "$HOME/screenshots"
+  
+  # Apply the changes by restarting SystemUIServer
+  killall SystemUIServer 2>/dev/null || true
+  
+  echo "  Screenshots (Cmd+Shift+3/4) will save to ~/screenshots/"
+  echo "  Screen recordings (Cmd+Shift+5) default to ~/screenshots/"
+  echo "  Screen Organizer app will auto-compress and move recordings to ~/screen-recordings/"
+  
+  # Install essential packages via Homebrew
+  if command -v brew >/dev/null 2>&1; then
+    echo "  Installing/updating essential packages..."
+    
+    # Core development and media tools
+    BREW_PACKAGES=(
+      "ffmpeg"          # Video processing for screen recording compression
+      "imagemagick"     # Image optimization for screenshots
+      "orbstack"        # Modern Docker desktop alternative
+      "eza"             # Better ls replacement (already used in .zshrc)
+      "fzf"             # Fuzzy finder (already used in .zshrc)
+      "zsh-autosuggestions"  # Shell autocompletion (already used in .zshrc)
+      "git"             # Latest git version
+      "gh"              # GitHub CLI
+      "jq"              # JSON processor
+      "ripgrep"         # Better grep
+      "fd"              # Better find
+      "bat"             # Better cat
+      "tldr"            # Simplified man pages
+      "htop"            # Better top
+    )
+    
+    for package in "${BREW_PACKAGES[@]}"; do
+      if brew list "$package" >/dev/null 2>&1; then
+        echo "    ✓ $package (already installed)"
+      else
+        echo "    Installing $package..."
+        brew install "$package" >/dev/null 2>&1 || echo "    ⚠ Failed to install $package"
+      fi
+    done
+    
+    # Cask applications
+    BREW_CASKS=(
+      "orbstack"        # Docker alternative
+    )
+    
+    for cask in "${BREW_CASKS[@]}"; do
+      if brew list --cask "$cask" >/dev/null 2>&1; then
+        echo "    ✓ $cask (already installed)"
+      else
+        echo "    Installing $cask..."
+        brew install --cask "$cask" >/dev/null 2>&1 || echo "    ⚠ Failed to install $cask"
+      fi
+    done
+    
+  else
+    echo "  ⚠ Homebrew not found - skipping package installation"
+    echo "  Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+  fi
 fi
 
-echo "==> Running ansible playbook..."
-ansible-playbook "$PLAYBOOK" --diff
+# Install/update npm deps for pi extensions
+for pkg in ~/.pi/agent/extensions/*/package.json; do
+  dir="$(dirname "$pkg")"
+  name="$(basename "$dir")"
+  if [ ! -d "$dir/node_modules" ]; then
+    echo "  Installing deps for extension: $name"
+    (cd "$dir" && npm install --no-fund --no-audit)
+  else
+    echo "  Updating deps for extension: $name"
+    (cd "$dir" && npm install --no-fund --no-audit 2>&1 | grep -v "up to date" || true)
+  fi
+done
+
 echo "==> Done"

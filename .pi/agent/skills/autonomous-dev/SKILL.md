@@ -19,8 +19,31 @@ Level 1: Multi-Planner (this agent, interactive with user)
 
 - `tk` CLI for task management
 - `pi` CLI for spawning sub-agents via `pi -p`
-- Project uses `bun`
 - Shared utilities at `~/.pi/agent/skills/shared/` (cpu-semaphore.sh, cleanup.sh, pitimeout.sh)
+
+## Project Detection
+
+Before planning, detect the project's toolchain by inspecting the working directory:
+
+| Signal | Language/Toolchain | Build | Test | Typecheck |
+|--------|--------------------|-------|------|-----------|
+| `Cargo.toml` | Rust | `cargo build` | `cargo test` | `cargo check` |
+| `package.json` + `bun.lockb` | TypeScript/Bun | `bun install` | `bun test` or per-script | `bunx tsc --noEmit` |
+| `package.json` + `package-lock.json` | TypeScript/Node | `npm install` | `npm test` or per-script | `npx tsc --noEmit` |
+| `package.json` + `yarn.lock` | TypeScript/Yarn | `yarn install` | `yarn test` | `yarn tsc --noEmit` |
+| `go.mod` | Go | `go build ./...` | `go test ./...` | `go vet ./...` |
+| `pyproject.toml` / `setup.py` | Python | `pip install -e .` | `pytest` | `mypy .` or `pyright` |
+| `Makefile` | Any (check contents) | `make build` | `make test` | `make check` |
+| `CMakeLists.txt` | C/C++ | `cmake --build build` | `ctest --test-dir build` | (compile is typecheck) |
+
+Read the project file to confirm the exact commands. For monorepos, identify which subdirectory the work targets and scope commands accordingly.
+
+Store these as **project context variables** used throughout all prompts:
+
+- `{cwd}` — working directory
+- `{build_cmd}` — build/compile command
+- `{test_cmd}` — test command (semaphore-wrapped: `source ~/.pi/agent/skills/shared/cpu-semaphore.sh && sem_run test 1 -- {raw_test_cmd}`)
+- `{check_cmd}` — typecheck/lint command (semaphore-wrapped: `source ~/.pi/agent/skills/shared/cpu-semaphore.sh && sem_run check 1 -- {raw_check_cmd}`)
 
 ## Core Principle: Test-Driven Development
 
@@ -42,6 +65,24 @@ You are the **multi-planner**. You work interactively with the user to plan tick
 2. Spawn a Level 2 orchestrator to execute all planned tickets, then present the summary
 
 **You do NOT:** implement, review, fix, commit, or run tests. Ever.
+
+## Step 0: Detect Project Context
+
+Inspect the working directory and determine:
+1. Language and toolchain
+2. Build, test, and typecheck commands
+3. Any monorepo structure or subdirectory scoping
+
+Present the detected context to the user for confirmation:
+
+> **Detected project context:**
+> - Language: Rust
+> - Build: `cargo build`
+> - Test: `cargo test`
+> - Check: `cargo check`
+> - Working dir: `/path/to/project`
+>
+> Does this look right?
 
 ## Step 1: Gather Tickets
 
@@ -75,7 +116,7 @@ For each ticket, one at a time:
 ### Planning Rules
 
 - **Show your work.** Show relevant code snippets, explain your reasoning.
-- **Be specific.** "Modify ComponentX" is not a plan. "In ComponentX.tsx, add a `disabled` prop that grays out the button and prevents onClick" is.
+- **Be specific.** "Modify ComponentX" is not a plan. "In src/ui/renderer.rs, remove the Block::default().borders(Borders::ALL) from render_main_area() and replace with a borderless Paragraph" is.
 - **Don't write code.** Plans are prose. Code comes in Level 3.
 - **One ticket at a time.** Finish planning ticket A before starting ticket B.
 - **The user has final say.** If they reject an approach, adapt.
@@ -89,7 +130,7 @@ Once all tickets are planned, confirm with the user:
 On go-ahead, spawn the Level 2 orchestrator. Pass it:
 - The list of planned ticket IDs
 - The working directory
-- Project context (package manager, test/typecheck commands)
+- Project context (build, test, typecheck commands)
 
 ```bash
 source ~/.pi/agent/skills/shared/pitimeout.sh
@@ -127,9 +168,9 @@ You are an autonomous orchestrator agent. You manage the execution of pre-planne
 
 ## Project Context
 - Working directory: {cwd}
-- Package manager: bun
-- Test command (semaphore-wrapped): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run test 1 -- bunx vitest run
-- Typecheck command (semaphore-wrapped): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run typecheck 1 -- bunx tsc --noEmit
+- Build command: {build_cmd}
+- Test command (semaphore-wrapped): {test_cmd}
+- Typecheck/lint command (semaphore-wrapped): {check_cmd}
 
 ## How to Spawn Worker Agents
 source ~/.pi/agent/skills/shared/pitimeout.sh
@@ -155,9 +196,9 @@ You are a TDD agent. Write tests for the plan below. Do NOT write any implementa
 
 ## Project Context
 - Working directory: {cwd}
-- Package manager: bun
-- Test (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run test 1 -- bunx vitest run
-- Typecheck (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run typecheck 1 -- bunx tsc --noEmit
+- Build: {build_cmd}
+- Test (MUST use semaphore): {test_cmd}
+- Check (MUST use semaphore): {check_cmd}
 
 ## Ticket
 ID: <ticket_id>
@@ -170,7 +211,7 @@ Title: <ticket_title>
 1. Read the plan carefully and identify all testable behavior
 2. Write test files covering: happy paths, edge cases, error cases
 3. Create minimal type stubs/interfaces if needed so tests compile, but do NOT implement business logic
-4. Run typecheck — tests must compile (against stubs)
+4. Run the check command — tests must compile (against stubs)
 5. Run tests — they should FAIL (red phase of TDD). This is expected and correct.
 6. Do NOT write implementation code. Only tests and minimal stubs.
 7. Do NOT commit
@@ -228,9 +269,9 @@ You are a coding agent. Implement the plan below precisely. Tests already exist 
 
 ## Project Context
 - Working directory: {cwd}
-- Package manager: bun
-- Test (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run test 1 -- bunx vitest run
-- Typecheck (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run typecheck 1 -- bunx tsc --noEmit
+- Build: {build_cmd}
+- Test (MUST use semaphore): {test_cmd}
+- Check (MUST use semaphore): {check_cmd}
 
 ## Ticket
 ID: <ticket_id>
@@ -243,7 +284,7 @@ Title: <ticket_title>
 1. Read the existing test files to understand expected behavior
 2. Implement the plan step by step, replacing any stubs with real code
 3. Run tests — all must pass (green phase of TDD)
-4. Run typecheck and fix errors
+4. Run the check command and fix errors
 5. BEFORE REPORTING: Re-read the ticket title and verify your implementation matches what was asked for, not just what the plan says.
 6. Do NOT commit
 
@@ -298,9 +339,9 @@ You are a coding agent. Fix the review issues listed below. Do not change anythi
 
 ## Project Context
 - Working directory: {cwd}
-- Package manager: bun
-- Test (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run test 1 -- bunx vitest run
-- Typecheck (MUST use semaphore): source ~/.pi/agent/skills/shared/cpu-semaphore.sh && cd packages/ui && sem_run typecheck 1 -- bunx tsc --noEmit
+- Build: {build_cmd}
+- Test (MUST use semaphore): {test_cmd}
+- Check (MUST use semaphore): {check_cmd}
 
 ## Ticket
 ID: <ticket_id>
@@ -315,7 +356,7 @@ Title: <ticket_title>
 ## Instructions
 1. Fix ONLY the listed issues
 2. Run tests and fix failures
-3. Run typecheck and fix errors
+3. Run the check command and fix errors
 4. Do NOT commit
 
 At the very end output exactly one of:
@@ -339,25 +380,6 @@ Then spawn a commit agent:
 Track the result for this ticket: ID, title, status (done/failed), number of review cycles, and a brief note about what happened.
 
 Move to the next ticket.
-
-## Screenshot Review (when Storybook is running)
-If Storybook is available (curl -s http://localhost:6006/index.json succeeds), add visual review after code review passes:
-
-curl -s http://localhost:6006/index.json | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for k in sorted(data['entries'].keys()):
-    print(k)
-" > /tmp/all-story-ids.txt
-
-mkdir -p /tmp/story-screenshots
-while IFS= read -r id; do
-  npx playwright screenshot --viewport-size='1200,900' --wait-for-timeout=3000 \
-    "http://localhost:6006/iframe.html?id=${id}&viewMode=story" \
-    "/tmp/story-screenshots/${id}.png" 2>/dev/null
-done < /tmp/all-story-ids.txt
-
-Review screenshots of affected stories and AllStates stories.
 
 ## Final Output
 After all tickets are processed, output EXACTLY this format:
@@ -397,7 +419,7 @@ TICKET_DETAIL_END
 
 ## Resource Management
 
-All CPU-intensive operations (tsc, vitest) use the semaphore at `~/.pi/agent/skills/shared/cpu-semaphore.sh`. This is critical under `parallel-auto` but harmless in sequential mode.
+All CPU-intensive operations (build, test, typecheck) use the semaphore at `~/.pi/agent/skills/shared/cpu-semaphore.sh`. This is critical under `parallel-auto` but harmless in sequential mode.
 
 ### Pi Lock File Warning
 
@@ -435,6 +457,6 @@ Pi acquires a synchronous lock on `~/.pi/agent/settings.json` during startup. Si
 - **Make reviewers adversarial:** "Assume there are bugs. Find them."
 
 ### Resource Management
-- **Always use the CPU semaphore for tsc and vitest.**
+- **Always use the CPU semaphore for build, test, and typecheck commands.**
 - **Always use timeouts on all sub-agent spawns.**
 - **Clean up after crashes:** `bash ~/.pi/agent/skills/shared/cleanup.sh`
