@@ -1,157 +1,185 @@
 ---
 name: mister-plex
-description: Cast Plex media to MiSTer FPGA via MistGlow + Groovy core. Browse anime/TV/movies on the Plex server and send playback commands to MistGlow running on the Mac, which streams video to MiSTer's CRT output. Use when the user wants to watch something on MiSTer, cast Plex to CRT, play anime, or control MistGlow playback.
+description: Cast Plex media to MiSTer FPGA via groovy-cli. Browse anime/TV/movies on the Plex server, find what was playing last, and stream video with burned-in subtitles to MiSTer's CRT output via the Groovy protocol. Use when the user wants to watch something on MiSTer, cast Plex to CRT, play anime, continue watching, or control playback.
 ---
 
 # MiSTer Plex Casting
 
-Stream Plex media to a PVM/CRT via MiSTer FPGA using MistGlow + Groovy core.
+Stream Plex media to a PVM/CRT via MiSTer FPGA using `groovy-cli` + Groovy core.
 
 ## Architecture
 
 ```
-Plex Server (192.168.0.29:32400)
-  → transcodes video
-  → sends to MistGlow (192.168.0.25:3005) on Mac
-    → streams frames via Groovy UDP protocol
-    → MiSTer FPGA (192.168.0.115) Groovy core
-      → analog video out to PVM via Rondo HD15
+Plex Server → direct play URL
+  ↓
+groovy-cli (on Mac):
+  - FFmpeg decodes video + burns subtitles → raw BGR24 frames
+  - FFmpeg decodes audio → PCM s16le 48kHz stereo
+  - Splits interlaced fields, sends via Groovy UDP protocol
+  ↓
+MiSTer FPGA (Groovy core) → analog out → PVM/CRT
 ```
 
 ## Prerequisites
 
-Before casting, ensure:
-1. **Groovy core** is loaded on MiSTer (_Utility → Groovy)
-2. **MistGlow** is running on Mac with Plex Receiver started (Plex tab → Start Plex Receiver)
-3. **GDM responder** is running: `mistglow-gdm` (at `/usr/local/bin/mistglow-gdm`)
+1. **Groovy core** loaded on MiSTer (_Utility → Groovy)
+2. **groovy-cli** built: `cd ~/code/groovy-cli && cargo build --release`
+3. **FFmpeg** installed: `brew install ffmpeg`
+4. **Plex authenticated**: `groovy-cli auth` (first time only — opens browser, saves token)
 
-### Starting everything
-```bash
-# Start GDM responder (if not already running)
-pgrep -f mistglow-gdm || nohup python3 /usr/local/bin/mistglow-gdm > /tmp/mistglow-gdm.log 2>&1 &
+## CLI Location
 
-# MistGlow must be started manually from /Applications/Mistglow.app
-# Groovy core must be loaded manually on MiSTer OSD
+```
+~/code/groovy-cli/target/release/groovy-cli
 ```
 
-## Credentials
+## Config
 
-- **Plex server:** `192.168.0.29:32400`
-- **Plex token:** `eGyeubYVEQRyZqZynfRo`
-- **MistGlow companion:** `192.168.0.25:3005`
-- **MistGlow client ID:** `61638E9E-A709-4C10-8EBC-358171AAEAF6`
-- **MiSTer IP:** `192.168.0.115` (ethernet, WiFi disabled)
-- **MiSTer SSH:** root / 1
-
-## Plex API Shortcuts
-
-### List libraries
-```bash
-curl -s "http://192.168.0.29:32400/library/sections" \
-  -H "X-Plex-Token: eGyeubYVEQRyZqZynfRo" \
-  -H "Accept: application/json"
+Stored at `~/.config/groovy-cli/config.toml`:
+```toml
+mister = "192.168.0.115"
+server = "192.168.0.29"
+port = 32400
+token = "auto-saved-by-auth"
+modeline = "640x480i NTSC"
 ```
 
-Libraries: Movies (key=2), Anime (key=3), TV Shows (key=1), Music (key=4)
+Settings can also come from CLI flags or env vars (`PLEX_TOKEN`, `GROOVY_MISTER`, `GROOVY_PLEX_SERVER`).
 
-### Search a library
+## Commands
+
 ```bash
-# Search anime by title
-curl -s "http://192.168.0.29:32400/library/sections/3/all?title=SEARCH_TERM" \
-  -H "X-Plex-Token: eGyeubYVEQRyZqZynfRo" \
-  -H "Accept: application/json"
-```
+# What was I watching? (On Deck / continue watching)
+groovy-cli continue
 
-### List episodes of a show
-```bash
-curl -s "http://192.168.0.29:32400/library/metadata/RATING_KEY/allLeaves" \
-  -H "X-Plex-Token: eGyeubYVEQRyZqZynfRo" \
-  -H "Accept: application/json"
-```
+# Search all libraries (anime, TV, movies)
+groovy-cli search "Gundam"
 
-### Cast to MistGlow
-```bash
-curl -s "http://192.168.0.25:3005/player/playback/playMedia?\
-key=%2Flibrary%2Fmetadata%2FRATING_KEY\
-&machineIdentifier=a92057788fca621bb0b7d221bbca8e1045adc095\
-&address=192.168.0.29\
-&port=32400\
-&protocol=http\
-&token=eGyeubYVEQRyZqZynfRo\
-&type=video\
-&commandID=1" \
-  -H "X-Plex-Client-Identifier: pi-controller" \
-  -H "X-Plex-Device-Name: pi"
-```
+# List episodes with watch status
+groovy-cli episodes "Gundam Wing"
 
-### Playback controls
-```bash
-# Pause
-curl -s "http://192.168.0.25:3005/player/playback/pause?commandID=2" \
-  -H "X-Plex-Client-Identifier: pi-controller"
+# Play next unwatched episode
+groovy-cli play "Gundam Wing"
 
-# Resume
-curl -s "http://192.168.0.25:3005/player/playback/play?commandID=3" \
-  -H "X-Plex-Client-Identifier: pi-controller"
+# Play specific episode
+groovy-cli play "Gundam Wing" -s 1 -e 4
 
-# Stop
-curl -s "http://192.168.0.25:3005/player/playback/stop?commandID=4" \
-  -H "X-Plex-Client-Identifier: pi-controller"
+# Play by Plex rating key
+groovy-cli play-key 70844
 
-# Skip next
-curl -s "http://192.168.0.25:3005/player/playback/skipNext?commandID=5" \
-  -H "X-Plex-Client-Identifier: pi-controller"
+# List libraries on the server
+groovy-cli libraries
 
-# Skip previous
-curl -s "http://192.168.0.25:3005/player/playback/skipPrevious?commandID=6" \
-  -H "X-Plex-Client-Identifier: pi-controller"
+# List available modelines
+groovy-cli modelines
 
-# Seek (milliseconds)
-curl -s "http://192.168.0.25:3005/player/playback/seekTo?offset=60000&commandID=7" \
-  -H "X-Plex-Client-Identifier: pi-controller"
+# Stop playback (sends close to MiSTer)
+groovy-cli stop
+
+# Show config
+groovy-cli config
+
+# First-time auth (opens browser for Plex OAuth)
+groovy-cli auth
 ```
 
 ## Common Workflows
 
-### 1. "Play Gundam Wing"
-1. Search anime library for the show
-2. Get episode list
-3. Find first unwatched episode (viewCount=0) or ask user
-4. Send playMedia command to MistGlow
-
-### 2. "Play next episode"
+### 1. "What was I watching?" / "Continue watching"
 ```bash
-curl -s "http://192.168.0.25:3005/player/playback/skipNext?commandID=5" \
-  -H "X-Plex-Client-Identifier: pi-controller"
+groovy-cli continue
+```
+Shows On Deck items with show name, episode, and how far in. Pick one and play by key.
+
+### 2. "Play Gundam Wing"
+```bash
+groovy-cli play "Gundam Wing"
+```
+Searches all libraries, finds the show, picks first unwatched episode, streams with subtitles.
+
+### 3. "Play next episode"
+Current playback must be stopped first, then:
+```bash
+groovy-cli play "Show Name"
+```
+It auto-picks the next unwatched.
+
+### 4. "Stop"
+```bash
+groovy-cli stop
 ```
 
-### 3. "Pause" / "Resume"
-Send pause/play commands as shown above.
-
-### 4. "What's in my anime library?"
+### 5. "What's in my anime library?"
 ```bash
-curl -s "http://192.168.0.29:32400/library/sections/3/all" \
-  -H "X-Plex-Token: eGyeubYVEQRyZqZynfRo" \
-  -H "Accept: application/json"
+groovy-cli search ""
 ```
-Parse and list show titles.
+Or check libraries first: `groovy-cli libraries`
 
-### 5. "Play a movie"
-Same flow but use library key=2 (Movies) instead of key=3 (Anime).
+## Adjusting Image Position/Size
 
-## MiSTer Network Config
+If the image doesn't fit the CRT properly (cut off edges, too wide/narrow), add a `[custom_modeline]` section to the config. Start from the preset values and tweak:
 
-- **WiFi:** configured via wpa_supplicant
-- **CIFS mount:** `//192.168.0.9/roms/mister` → `/media/fat/cifs/` (auto-mounts 30s after boot via user-startup.sh)
-- **SSH:** `sshpass -p '1' ssh -o StrictHostKeyChecking=no root@192.168.0.115`
-- **NAS (Unraid):** `192.168.0.9` user=sth pass=G3neral
+```toml
+[custom_modeline]
+p_clock = 6.700
+h_active = 320    # horizontal resolution
+h_begin = 336     # increase to shift image LEFT
+h_end = 367       # sync pulse end
+h_total = 426     # total horizontal pixels (including blanking)
+v_active = 240    # vertical resolution
+v_begin = 244     # increase to shift image UP
+v_end = 247       # sync pulse end
+v_total = 262     # total vertical lines (including blanking)
+interlace = false
+```
+
+Common tweaks:
+- **Image too far right**: decrease `h_begin` and `h_end` by same amount
+- **Image too far left**: increase `h_begin` and `h_end` by same amount
+- **Image too low**: decrease `v_begin` and `v_end` by same amount
+- **Image too high**: increase `v_begin` and `v_end` by same amount
+- **Image too wide**: decrease `h_active` (will add black border)
+- **Image too tall**: decrease `v_active` (will add black border)
+
+Preset modeline values for reference:
+- 320x240 NTSC: pclock=6.700 h=320/336/367/426 v=240/244/247/262
+- 640x480i NTSC: pclock=12.336 h=640/662/720/784 v=480/488/494/525
+- 720x480i NTSC: pclock=13.846 h=720/744/809/880 v=480/488/494/525
+
+## Network & Remote Execution
+
+**WiFi causes flickering and audio pops.** Groovy streaming requires ethernet.
+
+Before running `groovy-cli play`, check if the current machine is on WiFi:
+```bash
+# Check if on WiFi
+networksetup -getairportnetwork en0 2>/dev/null | grep -q "Current Wi-Fi Network"
+```
+
+If on WiFi, **run groovy-cli on the hardwired Mac** via SSH + tmux:
+```bash
+# Remote host (hardwired ethernet)
+GROOVY_HOST="shanekeulen@192.168.0.25"
+
+# Start playback in persistent tmux session
+ssh $GROOVY_HOST "source ~/.zshrc; tmux kill-session -t groovy 2>/dev/null; groovy-cli stop 2>/dev/null; sleep 1; tmux new-session -d -s groovy 'source ~/.zshrc; groovy-cli play \"SHOW NAME\" -a jpn 2>&1 | tee /tmp/groovy-play.log'"
+
+# Check status
+ssh $GROOVY_HOST "tail -5 /tmp/groovy-play.log"
+
+# Stop playback
+ssh $GROOVY_HOST "source ~/.zshrc; groovy-cli stop; tmux kill-session -t groovy"
+```
+
+If on ethernet, run locally as normal.
+
+- **MiSTer:** `192.168.0.115` (ethernet)
+- **Hardwired Mac:** `shanekeulen@192.168.0.25` (ethernet, has groovy-cli + ffmpeg installed)
+- **Plex server:** configured in `~/.config/groovy-cli/config.toml`
+- **MiSTer SSH:** `sshpass -p '1' ssh -o StrictHostKeyChecking=no root@192.168.0.115`
 
 ## MiSTer INI Notes
 
-- `vga_scaler=0` for games (native analog output)
-- `[Menu]` section has `vga_scaler=1` with 320x240 modeline for CRT-visible menus/scripts
-- `[Groovy]` section has `main=MiSTer_groovy` for the custom binary
+- `[Groovy]` section has `main=MiSTer_groovy`
 - `composite_sync=1` for PVM
 - `fb_terminal=1`
-- Saves go to SD card at `/media/fat/saves/<CORE>/`
-- Must hit F12 → Save Backup RAM to persist saves in most cores

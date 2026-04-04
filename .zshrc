@@ -108,6 +108,10 @@ if command -v wt >/dev/null 2>&1; then
 fi
 
 export PATH="/opt/homebrew/opt/libpq/bin:$PATH" # added by trm bootstrap (libpq)
-# bun completions
-[ -s "/Users/shanekeulen/.bun/_bun" ] && source "/Users/shanekeulen/.bun/_bun"
 
+# bun completions
+[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
