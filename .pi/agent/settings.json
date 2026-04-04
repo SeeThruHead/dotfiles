@@ -6,7 +6,7 @@
   "theme": "tomorrow-night",
   "packages": [
     "npm:pi-subagents",
-    "npm:pi-cloud-bridge",
+    "npm:pi-claude-bridge",
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-claude-bridge"
   ],
