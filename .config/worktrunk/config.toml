@@ -103,6 +103,9 @@
 # list.full = true
 # merge.squash = false
 # post-create.env = "cp .env.example .env"
+
+[projects."github.com/topsteptrader/trm"]
+post-create.pgdata = "ln -sf {{ repo_path }}/setup/docker/postgres-data {{ worktree_path }}/setup/docker/postgres-data"
 #
 # ### Custom prompt templates
 #
@@ -194,5 +197,3 @@
 # """
 # <!-- DEFAULT_SQUASH_TEMPLATE_END -->
 
-[projects."github.com/topsteptrader/trm"]
-post-create.copy-env = "rsync -a --exclude='local/' {{ repo_path }}/env/ {{ worktree_path }}/env/"
