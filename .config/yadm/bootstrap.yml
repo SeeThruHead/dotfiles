@@ -11,13 +11,17 @@
       - 1password
       - amethyst
       - bettertouchtool
+      - claude
+      - codex-app
       - discord
+      - dropbox
       - font-source-code-pro
       - ghostty
       - google-chrome
       - karabiner-elements
       - kitty
       - obs
+      - orbstack
       - raycast
       - signal
       - soundsource
@@ -65,7 +69,6 @@
 
     homebrew_taps:
       - dlvhdr/formulae
-      - restatedev/tap
       - roborev-dev/tap
       - seethruhead/tap
       - wedow/tools
@@ -73,10 +76,12 @@
     homebrew_packages:
       - bash
       - bat
+      - bchunk
       - btop
       - chafa
       - cmake
       - cowsay
+      - defaultbrowser
       - dlvhdr/formulae/diffnav
       - dockutil
       - duckdb
@@ -84,11 +89,12 @@
       - fd
       - fzf
       - gh
-      - go
-      - grep
+      - git-delta
       - gitleaks
       - gnupg
-      - git-delta
+      - go
+      - grafanactl
+      - grep
       - gum
       - htop
       - http-server
@@ -96,22 +102,34 @@
       - jq
       - just
       - logcli
+      - lzip
       - mas
       - mprocs
+      - nasm
       - neovim
       - ninja
+      - openjdk
       - oxker
       - pinentry-mac
+      - pipenv
       - pipx
+      - python@3.12
+      - python@3.13
       - ripgrep
+      - rtk
       - rust
+      - seethruhead/tap/screenorganizer
       - spark
       - speedtest-cli
+      - sshpass
+      - temporal
       - the_silver_searcher
       - tldr
       - tmux
       - tree
+      - tree-sitter
       - ttyd
+      - wedow/tools/ticket
       - wget
       - yadm
       - z
@@ -119,6 +137,9 @@
       - zig
       - zoxide
       - zsh-autosuggestions
+      # Notes: roborev-dev/tap/roborev installed via tap above if needed.
+      # Intentionally excluded per user 2026-04-07: groovy-cli (clone source instead),
+      # restate/restate-server, openjdk@8, python@3.9.
 
     # Mac App Store apps (must be "purchased" under signed-in Apple ID)
     mas_apps:
@@ -169,17 +190,38 @@
       ansible.builtin.shell: defaults import com.apple.symbolichotkeys ~/.config/yadm/symbolichotkeys.plist
       changed_when: false
 
+    - name: Quit Amethyst before importing its plist
+      ansible.builtin.command: osascript -e 'tell application "Amethyst" to quit'
+      changed_when: false
+      ignore_errors: true
+
+    - name: Import Amethyst keybindings + layouts + margins
+      ansible.builtin.shell: |
+        defaults import com.amethyst.Amethyst ~/.config/yadm/amethyst.plist
+        killall cfprefsd 2>/dev/null || true
+      changed_when: false
+
+    - name: Relaunch Amethyst
+      ansible.builtin.command: open -a Amethyst
+      changed_when: false
+      ignore_errors: true
+
+    # --- Default browser ---
+    - name: Set Chrome as default browser
+      ansible.builtin.shell: |
+        defaultbrowser | grep -q '\* chrome' || defaultbrowser chrome
+      register: default_browser_result
+      changed_when: "'chrome' not in default_browser_result.stdout or '* chrome' not in default_browser_result.stdout"
+
     # --- Mac App Store apps ---
     - name: Install Mac App Store apps
-      ansible.builtin.shell: "mas list | grep -q '^{{ item.id }} ' || mas install {{ item.id }}"
+      ansible.builtin.shell: "mas list 2>/dev/null | grep -q '^{{ item.id }} ' || mas install {{ item.id }}"
       loop: "{{ mas_apps }}"
       loop_control:
         label: "{{ item.name }} ({{ item.id }})"
       register: mas_result
       changed_when: "'Installed' in mas_result.stdout or 'Downloaded' in mas_result.stdout"
-      failed_when:
-        - mas_result.rc != 0
-        - "'Not signed in' not in mas_result.stderr"
+      ignore_errors: true
 
     # --- Dock pinned apps ---
     - name: Check current dock apps
@@ -244,7 +286,7 @@
         update: false
 
     - name: Install tmux plugins
-      ansible.builtin.shell: "~/.config/tmux/plugins/tpm/bin/install_plugins"
+      ansible.builtin.shell: "~/.config/tmux/plugins/tpm/bin/install_plugins || true"
       args:
         creates: "{{ lookup('env', 'HOME') }}/.config/tmux/plugins/tmux-sensible"
 

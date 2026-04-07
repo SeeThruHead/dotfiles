@@ -1,0 +1,11 @@
+[include]
+	path = ~/.config/git/base
+[credential]
+	helper = store
+[user]
+	name = shane keulen
+	email = shane.keulen@gmail.com
+[push]
+	autoSetupRemote = true
+[coderabbit]
+	machineId = cli/fc1169af2a0b4faa9903fed5734c1961

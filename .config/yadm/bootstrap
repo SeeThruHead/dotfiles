@@ -6,6 +6,17 @@ set -euo pipefail
 
 echo "==> yadm bootstrap"
 
+# Prime sudo up front and keep it alive for the duration of the run.
+# Several downstream tasks (cask .pkg installers, mas spotlight reindex)
+# call sudo non-interactively and will fail without a cached credential.
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  echo "  Caching sudo credentials (you may be prompted once)..."
+  sudo -v
+  ( while true; do sudo -n -v; sleep 50; done ) &
+  SUDO_KEEPALIVE_PID=$!
+  trap 'kill "$SUDO_KEEPALIVE_PID" 2>/dev/null || true' EXIT
+fi
+
 # macOS-specific configuration
 if [[ "$OSTYPE" == "darwin"* ]]; then
   echo "  Configuring macOS screenshot and screen recording locations..."
