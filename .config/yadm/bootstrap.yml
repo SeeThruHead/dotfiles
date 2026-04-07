@@ -152,6 +152,7 @@
       community.general.homebrew_cask:
         name: "{{ homebrew_casks }}"
         state: present
+        install_options: adopt
 
     # --- macOS defaults ---
     - name: Set macOS defaults
