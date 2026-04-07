@@ -10,16 +10,20 @@
     homebrew_casks:
       - 1password
       - amethyst
+      - bambu-studio
       - bettertouchtool
+      - brave-browser
       - claude
       - codex-app
       - discord
+      - drawio
       - dropbox
       - font-source-code-pro
       - ghostty
       - google-chrome
       - karabiner-elements
       - kitty
+      - localsend
       - obs
       - orbstack
       - raycast
