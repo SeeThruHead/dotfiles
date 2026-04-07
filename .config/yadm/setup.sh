@@ -14,8 +14,9 @@ if ! command -v brew &>/dev/null; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
 fi
 
-echo "==> Installing yadm and gnupg..."
-brew install yadm gnupg pinentry-mac
+echo "==> Installing yadm, gnupg, ansible..."
+brew install yadm gnupg pinentry-mac ansible
+ansible-galaxy collection install community.general
 
 echo "==> Setting up GPG..."
 mkdir -p ~/.gnupg

@@ -14,7 +14,9 @@
       - discord
       - font-source-code-pro
       - ghostty
+      - google-chrome
       - karabiner-elements
+      - kitty
       - obs
       - raycast
       - signal
@@ -76,6 +78,7 @@
       - cmake
       - cowsay
       - dlvhdr/formulae/diffnav
+      - dockutil
       - duckdb
       - eza
       - fd
@@ -93,6 +96,7 @@
       - jq
       - just
       - logcli
+      - mas
       - mprocs
       - neovim
       - ninja
@@ -115,6 +119,21 @@
       - zig
       - zoxide
       - zsh-autosuggestions
+
+    # Mac App Store apps (must be "purchased" under signed-in Apple ID)
+    mas_apps:
+      - { id: 918858936, name: Airmail }
+      - { id: 975937182, name: Fantastical }
+
+    # Dock pinned apps, in order. dockutil resets to exactly this list.
+    dock_apps:
+      - /Applications/Airmail.app
+      - /Applications/Google Chrome.app
+      - /Applications/Fantastical.app
+      - /Applications/Discord.app
+      - /Applications/kitty.app
+      - /Applications/Slack.app
+      - /System/Applications/System Settings.app
 
   tasks:
     # --- Homebrew ---
@@ -148,6 +167,33 @@
     - name: Import keyboard shortcuts (Mission Control, Spotlight, etc)
       ansible.builtin.shell: defaults import com.apple.symbolichotkeys ~/.config/yadm/symbolichotkeys.plist
       changed_when: false
+
+    # --- Mac App Store apps ---
+    - name: Install Mac App Store apps
+      ansible.builtin.shell: "mas list | grep -q '^{{ item.id }} ' || mas install {{ item.id }}"
+      loop: "{{ mas_apps }}"
+      loop_control:
+        label: "{{ item.name }} ({{ item.id }})"
+      register: mas_result
+      changed_when: "'Installed' in mas_result.stdout or 'Downloaded' in mas_result.stdout"
+      failed_when:
+        - mas_result.rc != 0
+        - "'Not signed in' not in mas_result.stderr"
+
+    # --- Dock pinned apps ---
+    - name: Check current dock apps
+      ansible.builtin.shell: "dockutil --list | awk '{print $2}'"
+      register: current_dock
+      changed_when: false
+
+    - name: Reset dock to desired pinned apps
+      ansible.builtin.shell: |
+        set -e
+        dockutil --remove all --no-restart
+        {% for app in dock_apps %}
+        dockutil --add "{{ app }}" --no-restart
+        {% endfor %}
+      when: current_dock.stdout_lines | sort != (dock_apps | map('basename') | map('regex_replace', '\\.app$', '') | list | sort)
 
     - name: Create Screenshots directory
       ansible.builtin.file:

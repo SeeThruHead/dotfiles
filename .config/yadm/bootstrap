@@ -74,6 +74,24 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "  ⚠ Homebrew not found - skipping package installation"
     echo "  Install Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
   fi
+
+  # Run the ansible playbook for the rest (casks, App Store apps, defaults, dock, etc.)
+  if command -v brew >/dev/null 2>&1; then
+    if ! command -v ansible-playbook >/dev/null 2>&1; then
+      echo "  Installing ansible..."
+      brew install ansible >/dev/null 2>&1 || echo "  ⚠ Failed to install ansible"
+    fi
+    if command -v ansible-galaxy >/dev/null 2>&1; then
+      echo "  Ensuring ansible community.general collection..."
+      ansible-galaxy collection install community.general >/dev/null 2>&1 || true
+    fi
+    if command -v ansible-playbook >/dev/null 2>&1; then
+      echo "==> Running ansible playbook (~/.config/yadm/bootstrap.yml)"
+      ansible-playbook "$HOME/.config/yadm/bootstrap.yml"
+    else
+      echo "  ⚠ ansible-playbook not available - skipping playbook"
+    fi
+  fi
 fi
 
 # Install/update npm deps for pi extensions
