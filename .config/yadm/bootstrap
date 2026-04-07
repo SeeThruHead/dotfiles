@@ -6,6 +6,13 @@ set -euo pipefail
 
 echo "==> yadm bootstrap"
 
+# Reset the manual followups file. Tasks in bootstrap.yml append commands here
+# that the user needs to run by hand (things ansible can't do for them, like
+# steps that need TCC permissions or interactive input). The contents are
+# printed at the end of the bootstrap run.
+FOLLOWUPS_FILE=/tmp/bootstrap-followups.txt
+rm -f "$FOLLOWUPS_FILE"
+
 # Install a sudoers drop-in granting passwordless sudo for $USER on first run.
 # Reason: ansible's shell tasks run in subprocesses that don't inherit sudo's
 # tty-bound credential cache, so `sudo -v` priming is useless once ansible takes
@@ -127,3 +134,14 @@ for pkg in ~/.pi/agent/extensions/*/package.json; do
 done
 
 echo "==> Done"
+
+# If any tasks queued manual followups, print them now so the user sees them
+# at the end of the run. These are commands the user needs to execute by hand.
+if [ -s "$FOLLOWUPS_FILE" ]; then
+  echo
+  echo "==> Manual follow-ups required:"
+  while IFS= read -r line; do
+    echo "  $line"
+  done < "$FOLLOWUPS_FILE"
+  echo
+fi

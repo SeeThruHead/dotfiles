@@ -118,7 +118,9 @@
       - ripgrep
       - rtk
       - rust
-      - seethruhead/tap/screenorganizer
+      # NOTE: seethruhead/tap/screenorganizer is installed in its own task below
+      # because its postinstall step needs App Management TCC permission to copy
+      # the .app into /Applications, which the bulk install task can't tolerate.
       - spark
       - speedtest-cli
       - sshpass
@@ -167,6 +169,34 @@
       community.general.homebrew:
         name: "{{ homebrew_packages }}"
         state: present
+
+    # screenorganizer's postinstall script copies the .app into /Applications
+    # via `rm -rf` + `ditto`. Both are blocked by macOS App Management TCC unless
+    # the parent terminal has the permission granted. We install the formula here
+    # but tolerate the postinstall failure, then queue a manual followup so the
+    # user can re-run `brew postinstall` after granting the permission.
+    - name: Install screenorganizer (postinstall failure tolerated)
+      ansible.builtin.shell: |
+        if brew list --formula seethruhead/tap/screenorganizer >/dev/null 2>&1; then
+          echo already_installed
+        else
+          brew install seethruhead/tap/screenorganizer 2>&1 || echo postinstall_warning
+        fi
+      register: screenorganizer_install
+      changed_when: "'already_installed' not in screenorganizer_install.stdout"
+
+    - name: Check if Screen Organizer.app is deployed to /Applications
+      ansible.builtin.stat:
+        path: /Applications/Screen Organizer.app
+      register: screenorganizer_app_stat
+
+    - name: Queue manual followup for Screen Organizer if .app not deployed
+      ansible.builtin.lineinfile:
+        path: /tmp/bootstrap-followups.txt
+        create: yes
+        mode: "0644"
+        line: "brew postinstall seethruhead/tap/screenorganizer    # deploys Screen Organizer.app to /Applications. First grant kitty App Management permission in System Settings → Privacy & Security."
+      when: not screenorganizer_app_stat.stat.exists
 
     # --- Homebrew casks ---
     - name: Install homebrew casks
