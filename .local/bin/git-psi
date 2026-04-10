@@ -5,7 +5,7 @@
 
 set -euo pipefail
 LIB_DIR="${HOME}/.local/lib"
-source "$LIB_DIR/git-fzf-lib.sh"
+source "$LIB_DIR/fzf-lib.sh"
 
 REMOTE="origin"
 DRY_RUN=false

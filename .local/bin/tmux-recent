@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# tmux-recent — interactive tmux session picker with preview
+# Outputs selected session name. Called from tmux() wrapper in .zshrc.
+
+set -euo pipefail
+LIB_DIR="${HOME}/.local/lib"
+source "$LIB_DIR/fzf-lib.sh"
+
+tmux list-sessions -F '#{session_last_attached}|#{session_name}|#{session_windows}|#{session_created_string}|#{?session_attached,attached,detached}' 2>/dev/null \
+| sort -t'|' -k1 -rn \
+| while IFS='|' read -r _ts name windows created status; do
+    printf '%-25s  %-10s  %s windows  %s\n' "$name" "$status" "$windows" "$created"
+  done \
+| fzf \
+    "${FZF_GIT_DEFAULTS[@]}" \
+    --prompt="session> " \
+    --header="  Session                    Status      Windows   Created" \
+    --preview-window="right,60%,wrap" \
+    --preview="
+      name=\$(echo {} | awk '{print \$1}')
+      echo '── windows ──'
+      command tmux list-windows -t \"\$name\" -F '#I: #W #{pane_current_path}' 2>/dev/null
+      echo ''
+      echo '── active pane ──'
+      command tmux capture-pane -t \"\$name\" -p 2>/dev/null | tail -40
+    " \
+| awk '{print $1}'

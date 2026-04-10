@@ -5,7 +5,7 @@
 
 set -euo pipefail
 LIB_DIR="${HOME}/.local/lib"
-source "$LIB_DIR/git-fzf-lib.sh"
+source "$LIB_DIR/fzf-lib.sh"
 
 count="${1:-20}"
 current=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
@@ -27,7 +27,7 @@ branch=$(
       --header="  Branch                          Last commit           Message" \
       --preview-window="right,60%,wrap" \
       --preview="
-        source \"$LIB_DIR/git-fzf-lib.sh\"
+        source \"$LIB_DIR/fzf-lib.sh\"
         name=\$(echo {} | awk '{if (\$1 == \"*\") print \$2; else print \$1}')
         git_branch_preview \"\$name\"
       " \

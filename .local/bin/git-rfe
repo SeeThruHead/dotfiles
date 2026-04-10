@@ -5,7 +5,7 @@
 
 set -euo pipefail
 LIB_DIR="${HOME}/.local/lib"
-source "$LIB_DIR/git-fzf-lib.sh"
+source "$LIB_DIR/fzf-lib.sh"
 
 count="${1:-200}"
 
@@ -17,6 +17,6 @@ git reflog --format='%h  %gd  %gs  (%cr)' --no-abbrev-commit -n "$count" \
     --bind="enter:execute-silent(echo -n {1} | pbcopy)+abort" \
     --preview-window="right,65%,wrap" \
     --preview="
-      source \"$LIB_DIR/git-fzf-lib.sh\"
+      source \"$LIB_DIR/fzf-lib.sh\"
       git_commit_preview {1}
     "

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# git-fzf-lib.sh — shared base for fzf-based git tools
-# Source this from git-recent, git-rfe, git-psi, etc.
+# fzf-lib.sh — shared base for fzf-based interactive tools
+# Source this from git-recent, wt-recent, tmux-recent, etc.
 #
 # Provides:
 #   FZF_GIT_DEFAULTS   — standard fzf flags
@@ -18,7 +18,7 @@ FZF_GIT_DEFAULTS=(
 )
 
 # Preview a single commit by hash.
-# Usage in fzf --preview: source git-fzf-lib.sh; git_commit_preview <hash>
+# Usage in fzf --preview: source fzf-lib.sh; git_commit_preview <hash>
 git_commit_preview() {
   local hash="$1"
   printf '\e[1;33m%s\e[0m \e[1m%s\e[0m\n' "$hash" "$(git log --format='%s' -1 "$hash" 2>/dev/null)"
@@ -42,7 +42,7 @@ git_commit_preview() {
 }
 
 # Preview a branch — shows tip info + diff against default branch.
-# Usage in fzf --preview: source git-fzf-lib.sh; git_branch_preview <branch>
+# Usage in fzf --preview: source fzf-lib.sh; git_branch_preview <branch>
 git_branch_preview() {
   local name="$1"
   printf '\e[1;33m%s\e[0m\n' "$name"
