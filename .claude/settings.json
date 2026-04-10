@@ -1,10 +1,25 @@
 {
+  "includeCoAuthoredBy": false,
   "permissions": {
     "allow": [
       "Bash",
       "Read",
       "Write",
       "Edit"
+    ]
+  },
+  "model": "opus",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/shanekeulen/.claude/hooks/rtk-rewrite.sh"
+          }
+        ]
+      }
     ]
   },
   "permissionMode": "bypassPermissions"

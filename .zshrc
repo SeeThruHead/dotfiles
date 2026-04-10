@@ -46,7 +46,7 @@ source ~/powerlevel10k/powerlevel10k.zsh-theme
 # Interactive shell tools
 if [[ $- == *i* ]]; then
   # eza (modern ls)
-  alias ls='eza --icons --grid --group-directories-first'
+  alias ls='eza --icons -lh --group-directories-first'
   alias ll='eza -la --icons --git'
   alias lt='eza --tree --level=2 --icons'
 
@@ -109,3 +109,5 @@ fi
 
 # Machine-local overrides (not tracked by yadm)
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
+export PATH="/opt/homebrew/opt/libpq/bin:$PATH" # added by trm bootstrap (libpq)
+export PATH="/opt/homebrew/opt/openjdk/bin:$PATH" # added by trm bootstrap (openjdk)
