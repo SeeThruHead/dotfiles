@@ -122,6 +122,7 @@
       - ripgrep
       - rtk
       - rust
+      - seethruhead/tap/portkill
       # NOTE: seethruhead/tap/screenorganizer is installed in its own task below
       # because its postinstall step needs App Management TCC permission to copy
       # the .app into /Applications, which the bulk install task can't tolerate.
