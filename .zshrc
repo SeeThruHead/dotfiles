@@ -57,6 +57,9 @@ fi
 # zoxide (smart cd)
 eval "$(zoxide init zsh)"
 
+# Completion system (required for compdef below)
+autoload -Uz compinit && compinit
+
 # tmux rct — fuzzy find and attach to a tmux session
 tmux() {
   if [[ "$1" == "rct" ]]; then
