@@ -19,6 +19,7 @@ alias dc="docker-compose"
 alias gs="git status"
 alias ga="git add --all"
 alias dash="gh dash"
+alias claude="claude --dangerously-skip-permissions"
 
 # Go
 [[ -d ~/go/bin ]] && export PATH="$PATH:$HOME/go/bin"
@@ -114,3 +115,12 @@ fi
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 export PATH="/opt/homebrew/opt/libpq/bin:$PATH" # added by trm bootstrap (libpq)
 export PATH="/opt/homebrew/opt/openjdk/bin:$PATH" # added by trm bootstrap (openjdk)
+
+# bun completions
+[ -s "/Users/sth/.bun/_bun" ] && source "/Users/sth/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+. "$HOME/.moon/bin/env"
