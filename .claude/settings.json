@@ -22,5 +22,6 @@
       }
     ]
   },
-  "permissionMode": "bypassPermissions"
+  "permissionMode": "bypassPermissions",
+  "effortLevel": "medium"
 }
