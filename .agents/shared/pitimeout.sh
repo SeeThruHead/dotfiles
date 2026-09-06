@@ -2,7 +2,7 @@
 # pitimeout.sh — Portable timeout for macOS (no coreutils needed)
 #
 # Usage:
-#   source ~/.pi/agent/skills/shared/pitimeout.sh
+#   source ~/.agents/shared/pitimeout.sh
 #   pitimeout <seconds> <command> [args...]
 #
 # Examples:
