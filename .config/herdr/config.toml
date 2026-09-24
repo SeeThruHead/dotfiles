@@ -1,0 +1,66 @@
+onboarding = false
+[theme]
+name = "tokyo-night"
+
+[keys]
+prefix = "ctrl+a"
+
+detach = "prefix+d"
+new_workspace = "prefix+c"
+rename_workspace = "prefix+shift+w"
+close_workspace = "prefix+shift+d"
+workspace_picker = "prefix+w"
+goto = "prefix+g"
+switch_workspace = "prefix+1..9"
+previous_workspace = "prefix+shift+p"
+next_workspace = "prefix+shift+n"
+
+new_tab = "prefix+shift+c"
+close_tab = "prefix+shift+x"
+switch_tab = ""
+previous_tab = ""
+next_tab = ""
+
+focus_pane_left = "ctrl+h"
+focus_pane_down = "ctrl+j"
+focus_pane_up = "ctrl+k"
+focus_pane_right = "ctrl+l"
+cycle_pane_next = "prefix+}"
+cycle_pane_previous = "prefix+{"
+
+split_vertical = "prefix+%"
+split_horizontal = 'prefix+"'
+close_pane = "prefix+x"
+last_pane = "prefix+tab"
+zoom = "prefix+z"
+
+resize_mode = "prefix+r"
+resize_pane_left = "ctrl+left"
+resize_pane_down = "ctrl+down"
+resize_pane_up = "ctrl+up"
+resize_pane_right = "ctrl+right"
+
+toggle_sidebar = "prefix+b"
+edit_scrollback = "prefix+e"
+reload_config = "prefix+shift+r"
+
+[worktrees]
+directory = "~/.herdr/worktrees"
+
+[terminal]
+new_cwd = "follow"
+
+[ui]
+hide_tab_bar_when_single_tab = true
+prompt_new_tab_name = false
+prompt_new_workspace_name = true
+mouse_capture = true
+copy_on_select = true
+agent_panel_sort = "spaces"
+
+[[keys.command]]
+key = "prefix+shift+g"
+type = "popup"
+command = "/Users/shanekeulen/.config/herdr/new-worktree.sh"
+width = "80%"
+height = "80%"
