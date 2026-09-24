@@ -32,3 +32,7 @@ yadm bootstrap
 ```
 
 Idempotent — safe to run anytime.
+
+## Agent workflow setup
+
+After bootstrap, follow [.config/yadm/AGENT-SETUP.md](.config/yadm/AGENT-SETUP.md) (written for an AI agent to execute) to install herdr, worktrunk, Graphite, the agent CLIs and their integrations.
