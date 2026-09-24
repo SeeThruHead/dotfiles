@@ -295,7 +295,7 @@ tsupa() {
 }
 
 # >>> trm-cli managed >>>
-[ -f "/Users/shanekeulen/.zshrc.trm-cli" ] && source "/Users/shanekeulen/.zshrc.trm-cli"
+[ -f "$HOME/.zshrc.trm-cli" ] && source "$HOME/.zshrc.trm-cli"
 # <<< trm-cli managed <<<
 
 # Skip the trm repo's husky pre-push checks (lint-staged over the pushed range).
@@ -304,4 +304,4 @@ tsupa() {
 export DISABLE_PRE_PUSH_CHECKS=true
 
 # opencode
-export PATH=/Users/shanekeulen/.opencode/bin:$PATH
+export PATH="$HOME/.opencode/bin:$PATH"

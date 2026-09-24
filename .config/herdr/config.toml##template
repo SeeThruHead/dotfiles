@@ -61,6 +61,6 @@ agent_panel_sort = "spaces"
 [[keys.command]]
 key = "prefix+shift+g"
 type = "popup"
-command = "/Users/shanekeulen/.config/herdr/new-worktree.sh"
+command = "{{ env.HOME }}/.config/herdr/new-worktree.sh"
 width = "80%"
 height = "80%"

@@ -4,7 +4,7 @@
       {
         "hooks": [
           {
-            "command": "bash '/Users/shanekeulen/.codex/herdr-agent-state.sh' session",
+            "command": "bash '{{ env.HOME }}/.codex/herdr-agent-state.sh' session",
             "timeout": 10,
             "type": "command"
           }
