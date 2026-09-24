@@ -19,7 +19,78 @@ alias dc="docker-compose"
 alias gs="git status"
 alias ga="git add --all"
 alias dash="gh dash"
-alias claude="claude --dangerously-skip-permissions"
+
+unalias claude oclaude cpi pi cpifigma cpitap 2>/dev/null
+oclaude() {
+  local tap=1 a
+  local -a rest
+  for a in "$@"; do
+    case "$a" in
+      --no-tap) tap=0 ;;
+      *)        rest+=("$a") ;;
+    esac
+  done
+  local -a flags=(--dangerously-skip-permissions)
+  if (( tap )); then
+    claude-tap --tap-proxy-mode forward "${flags[@]}" "${rest[@]}"
+  else
+    command claude "${flags[@]}" "${rest[@]}"
+  fi
+}
+
+claude() {
+  local tap=1 stock=0 a
+  local -a rest
+  for a in "$@"; do
+    case "$a" in
+      --no-tap) tap=0 ;;
+      --stock)  stock=1 ;;
+      *)        rest+=("$a") ;;
+    esac
+  done
+  local -a flags=(--dangerously-skip-permissions)
+  if (( ! stock )); then
+    flags+=(--system-prompt-file "$HOME/.claude/pi-system.md" --exclude-dynamic-system-prompt-sections)
+    flags+=(--tools Read,Bash,Edit,Write,WebFetch,ToolSearch)
+  fi
+  if (( tap )); then
+    claude-tap --tap-proxy-mode forward "${flags[@]}" "${rest[@]}"
+  else
+    command claude "${flags[@]}" "${rest[@]}"
+  fi
+}
+
+pi() {
+  local tap=1 a
+  local -a rest
+  for a in "$@"; do
+    case "$a" in
+      --no-tap) tap=0 ;;
+      *)        rest+=("$a") ;;
+    esac
+  done
+  if (( tap )); then
+    claude-tap --tap-client pi -- "${rest[@]}"
+  else
+    command pi "${rest[@]}"
+  fi
+}
+
+opencode() {
+  local tap=1 a
+  local -a rest
+  for a in "$@"; do
+    case "$a" in
+      --no-tap) tap=0 ;;
+      *)        rest+=("$a") ;;
+    esac
+  done
+  if (( tap )); then
+    claude-tap --tap-client opencode -- "${rest[@]}"
+  else
+    command opencode "${rest[@]}"
+  fi
+}
 
 # Go
 [[ -d ~/go/bin ]] && export PATH="$PATH:$HOME/go/bin"
@@ -198,3 +269,39 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
 [[ -s "$HOME/.moon/bin/env" ]] && . "$HOME/.moon/bin/env"
+export PATH="/opt/homebrew/opt/openjdk/bin:$PATH" # added by trm bootstrap (openjdk)
+export PATH="/opt/homebrew/opt/postgresql@15/bin:$PATH" # added by trm bootstrap (postgresql@15)
+
+# trm-cli tab completion
+eval "$(trm --completions zsh)"
+eval "$(trm --completions zsh)" # added by trm bootstrap (completions)
+
+_tmux_rename_to_repo() {
+  [[ -z "$TMUX" ]] && return
+  if git rev-parse --is-inside-work-tree &>/dev/null; then
+    tmux rename-window "$(basename "$(git rev-parse --show-toplevel)")" 2>/dev/null
+  fi
+}
+autoload -U add-zsh-hook
+add-zsh-hook chpwd _tmux_rename_to_repo
+add-zsh-hook precmd _tmux_rename_to_repo
+# One tmux session per Supacode worktree, on the shared default server.
+# Run manually in any Supacode terminal you want multiplexed.
+tsupa() {
+  [[ -n "$TMUX" ]] && { echo "already in tmux"; return 1; }
+  local wt=${SUPACODE_WORKTREE_PATH:-$PWD}
+  local sess="$(basename "$wt" | tr ' .:/' '____')-$(printf '%s' "$wt" | shasum | cut -c1-6)"
+  exec tmux new-session -A -s "$sess"
+}
+
+# >>> trm-cli managed >>>
+[ -f "/Users/shanekeulen/.zshrc.trm-cli" ] && source "/Users/shanekeulen/.zshrc.trm-cli"
+# <<< trm-cli managed <<<
+
+# Skip the trm repo's husky pre-push checks (lint-staged over the pushed range).
+# CI still runs them. Deliberately NOT `HUSKY=0`, which would also disable the
+# pre-commit gitleaks secret scan.
+export DISABLE_PRE_PUSH_CHECKS=true
+
+# opencode
+export PATH=/Users/shanekeulen/.opencode/bin:$PATH

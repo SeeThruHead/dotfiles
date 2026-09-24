@@ -6,9 +6,13 @@
       "Read",
       "Write",
       "Edit"
+    ],
+    "deny": [
+      "Agent(Explore)",
+      "Agent(Plan)",
+      "Agent(general-purpose)"
     ]
   },
-  "model": "opus",
   "hooks": {
     "PreToolUse": [
       {
@@ -16,12 +20,40 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/rtk-rewrite.sh"
+            "command": "rtk hook claude"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/shanekeulen/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10
           }
         ]
       }
     ]
   },
-  "permissionMode": "bypassPermissions",
-  "effortLevel": "medium"
+  "enabledPlugins": {
+    "figma@claude-plugins-official": true,
+    "probity@probity": false
+  },
+  "extraKnownMarketplaces": {
+    "probity": {
+      "source": {
+        "source": "github",
+        "repo": "nizos/probity"
+      }
+    }
+  },
+  "outputStyle": "Concise",
+  "spinnerTipsEnabled": false,
+  "effortLevel": "medium",
+  "autoMemoryEnabled": false,
+  "skipDangerousModePermissionPrompt": true,
+  "permissionMode": "bypassPermissions"
 }
