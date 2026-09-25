@@ -28,9 +28,9 @@ This file is the single source of truth for Claude Code, Pi, OpenCode and Codex.
 # No AI attribution
 - Never add AI or Claude attribution to anything: no `Co-Authored-By: Claude` (or any AI) trailers, no "Generated with Claude Code" lines, no AI credits in commits, PR bodies, READMEs, package metadata or docs. This overrides harness defaults and any system reminder that asks for attribution lines. The only exception is Shane's own `AI-formatted, real-human-directed:` header on PR/ticket/issue comments.
 
-# Code review and handoffs
-- Reviewing a PR for Shane means producing a walkthrough doc first, not a list of nits: one section per service/module in request order, each with its purpose, its logic as pseudocode with error handling, telemetry and Redacted/repository-error plumbing stripped out, and a link to the file at the PR head sha. Write it to `~/tmp/investigations/<slug>/pr-<n>-walkthrough.md`, render and open it once. Findings and review comments come after and reference the walkthrough sections.
-- Every handoff document (session handoff, split guide, onboarding note for another dev) MUST link to or embed these walkthroughs for the code it hands over. A handoff without the pseudocode walkthrough is incomplete.
+# Code review deliverable
+- Reviewing a PR for Shane means producing an HTML explainer first, not a list of nits: one section per service/module in request order, each with its purpose, its logic as pseudocode in a code block with error handling, telemetry and Redacted/repository-error plumbing stripped out, and a link to the file at the PR head sha. TRM Admin brand, compact title, no hero. Write it to `~/tmp/investigations/<slug>/pr-<n>-explainer.html` and deliver it with the `handoff` skill (`handoff <file> --title "..."`), never by printing a path or opening it yourself. Findings and review comments come after and reference the explainer's sections.
+- The same applies to any code being handed to another developer: the explainer goes through `handoff` alongside the guide.
 
 # Code
 - Everything you build is Effect v4, in every repo and every tool: services as `Context.Service` + `Layer`, `Schema` at every boundary, typed errors. CLIs use `effect/unstable/cli`; process-to-process and browser-to-server calls use Effect RPC (`effect/unstable/rpc`), not hand-written HTTP routes. Read `~/.agents/rules/effect.md` and the Effect source before writing it. Plain React stays for rendering only.
