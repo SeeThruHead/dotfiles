@@ -6,3 +6,4 @@
 - Never rm lockfiles or nuke node_modules; update incrementally.
 - Local main lags: fetch and diff against `origin/main`. For PR review, source of truth is `gh pr diff <num>`.
 - Commit messages state what changed; no diagnostic theories/speculation (that belongs in the PR).
+- The Jira key in a commit message is a claim about what that commit does, read by QA and the release meeting. Before pushing a branch, check every commit message names the ticket that actually describes it (see jira.md).
